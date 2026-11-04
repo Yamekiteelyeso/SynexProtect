@@ -16,7 +16,8 @@ const EPHEMERAL = MessageFlags.Ephemeral;
 // ---------- Reply helpers ----------
 // Discord gives 3 seconds to answer an interaction. We defer first, then follow up.
 // Deferred = the first answer goes through editReply, which keeps the ephemeral state set by deferReply.
-const defer = (i) => (i.deferred || i.replied ? Promise.resolve() : i.deferReply({ flags: EPHEMERAL }).catch(() => {}));
+// discord.js 14.16 honors `ephemeral: true` on deferReply; `flags` alone was not keeping the answer private.
+const defer = (i) => (i.deferred || i.replied ? Promise.resolve() : i.deferReply({ ephemeral: true }).catch(() => {}));
 const reply = (i, payload) => {
   if (!i.deferred && !i.replied) return i.reply({ ...payload, flags: EPHEMERAL });
   if (i.deferred && !i.replied) return i.editReply(payload);
