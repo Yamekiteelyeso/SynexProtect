@@ -14,7 +14,7 @@ const n = (x) => Number(x || 0).toLocaleString('en-US');
 const denyEmbed = () => new EmbedBuilder().setColor(0xed4245).setTitle('¡NOT WHITELIST!')
   .setDescription('You need to be whitelisted to get this script.\nIf you have a script key, click on the Redeem button below to redeem it');
 const statsEmbed = (s, st, k) => {
-  const e = new EmbedBuilder().setColor(0x5865f2).setTitle(`📊 ${s.slug} · Stats`)
+  const e = new EmbedBuilder().setColor(0x4f545c).setTitle(`📊 ${s.slug} · Stats`)
     .addFields({ name: 'Executions', value: `Today: **${n(st.d1)}**\n7 days: **${n(st.d7)}**\n30 days: **${n(st.d30)}**\nTotal: **${n(st.total)}**`, inline: true });
   if (k) e.addFields({ name: 'Your key', value: `Expires: ${k.expires_at ? new Date(k.expires_at).toLocaleString('en-US') : 'Lifetime'}\nHWID: ${k.hwid ? 'Linked' : 'Free'}\nUses: ${n(k.uses)}\nLast use: ${k.last ? new Date(k.last).toLocaleString('en-US') : 'Never'}`, inline: true });
   return e;
@@ -76,6 +76,9 @@ const defs = [
     .addChannelOption((o) => o.setName('channel').setDescription('Channel to post in')),
   new SlashCommandBuilder().setName('delpanel').setDescription('Delete the panel of a script')
     .addStringOption((o) => o.setName('script').setDescription('Your script').setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName('expirydm').setDescription('DM buyers when their key expires (owner/admin)')
+    .addStringOption(scriptOpt)
+    .addBooleanOption((o) => o.setName('enabled').setDescription('On or off').setRequired(true)),
   new SlashCommandBuilder().setName('myscripts').setDescription('Show your scripts and their stats'),
   new SlashCommandBuilder().setName('stats').setDescription('Execution stats of a script (owner/admin)').addStringOption(scriptOpt),
   new SlashCommandBuilder().setName('redeem').setDescription('Redeem a key')
@@ -99,6 +102,18 @@ function onAutocomplete(i) {
     ? db.prepare('select slug, name from scripts order by id desc limit 200').all()
     : db.prepare('select s.slug, s.name from scripts s join users u on u.id=s.user_id where u.discord_id=? order by s.id desc').all(i.user.id);
   return i.respond(rows.filter((r) => (r.name || r.slug).toLowerCase().includes(q) || r.slug.includes(q)).slice(0, 25).map((r) => ({ name: r.name || r.slug, value: r.slug })));
+}
+
+async function checkExpiries() {
+  const rows = db.prepare('select k.id, k.owner_discord_id from lkeys k join scripts s on s.id=k.script_id where s.expiry_dm=1 and k.notified=0 and k.owner_discord_id is not null and k.expires_at is not null and k.expires_at < ?').all(Date.now());
+  for (const r of rows) {
+    db.prepare('update lkeys set notified=1 where id=?').run(r.id);
+    try {
+      const u = await client.users.fetch(r.owner_discord_id);
+      const e = new EmbedBuilder().setColor(0xed4245).setTitle('Key expired').setDescription('your key expired\nbuy another key or ignore this message');
+      await u.send({ embeds: [e] });
+    } catch (err) { console.error('[expiry-dm]', err.message); }
+  }
 }
 
 async function onCommand(i) {
@@ -128,13 +143,17 @@ async function onCommand(i) {
     const k = db.prepare('select * from lkeys where k=?').get(i.options.getString('key').trim());
     if (!k) return say(i, 'Key not found.');
     const base = Math.max(Date.now(), k.expires_at || 0);
-    db.prepare('update lkeys set expires_at=? where id=?').run(base + i.options.getInteger('days') * C.DAY, k.id);
+    db.prepare('update lkeys set expires_at=?, notified=0 where id=?').run(base + i.options.getInteger('days') * C.DAY, k.id);
     return say(i, 'Time added.');
   }
 
   const s = ownScript(i, i.options.getString('script'));
   if (!s) return say(i, "I couldn't find that script in your account.");
 
+  if (cmd === 'expirydm') {
+    db.prepare('update scripts set expiry_dm=? where id=?').run(i.options.getBoolean('enabled') ? 1 : 0, s.id);
+    return say(i, `Expiry DM for **${s.slug}** is now ${i.options.getBoolean('enabled') ? 'ON' : 'OFF'}.`);
+  }
   if (cmd === 'deletekey') {
     const key = i.options.getString('key'), user = i.options.getUser('user');
     let r = { changes: 0 };
@@ -171,7 +190,7 @@ async function onCommand(i) {
     const channel = i.options.getChannel('channel') || i.channel;
     if (!channel || !channel.isTextBased || !channel.isTextBased()) return say(i, 'Pick a text channel.');
     const desc = i.options.getString('descripcion') || 'Use the buttons below to redeem your key, get the script or get your role.';
-    const embed = new EmbedBuilder().setColor(0x5865f2)
+    const embed = new EmbedBuilder().setColor(0x4f545c)
       .setTitle(`${s.name || s.slug} Control Panel`)
       .setDescription(`This control panel is for the project: ${s.name || s.slug}\nIf you're a buyer, click on the buttons below to redeem your key, get the script or get your role.${i.options.getString('descripcion') ? '\n\n' + i.options.getString('descripcion') : ''}`)
       .setFooter({ text: `Sent by ${i.user.username}`, iconURL: i.user.displayAvatarURL() })
@@ -233,6 +252,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 
 client.once('ready', async () => {
   console.log('[bot] conectado como', client.user.tag);
+  setInterval(() => checkExpiries().catch((e) => console.error('[expiry]', e.message)), 5 * 60e3);
   try {
     const body = defs.map((d) => d.toJSON());
     await client.application.commands.set(body);
