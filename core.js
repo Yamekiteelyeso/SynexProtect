@@ -97,11 +97,16 @@ if hwid == "0" then pcall(function() hwid = tostring(game:GetService("Players").
 hwid = string.gsub(hwid, "[^%w_%-%.]", "")
 local n = math.random(1, 2147483640)
 local T = os.time()
+local PID = "0"
+pcall(function() PID = tostring(game.PlaceId) end)
+local UNAME = "Unknown"
+pcall(function() UNAME = game:GetService("Players").LocalPlayer.Name end)
+UNAME = string.gsub(tostring(UNAME), "[^%w_]", "")
 local h = 0
 for i = 1, #KEY do h = (h * 131 + string.byte(KEY, i)) % 2147483646 end
 local seed = ((n * 16807) + h) % 2147483646 + 1
 local okr, body = pcall(function()
-  return game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?k=" .. KEY .. "&h=" .. hwid .. "&n=" .. n .. "&t=" .. T)
+  return game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?k=" .. KEY .. "&h=" .. hwid .. "&n=" .. n .. "&t=" .. T .. "&p=" .. PID .. "&u=" .. UNAME)
 end)
 if not okr or type(body) ~= "string" or #body < 4 then return warn("[SynexProtect] No se pudo cargar el script") end
 local x = seed
@@ -242,7 +247,7 @@ footer { margin-top: 26px; font-size: 12px; color: #4a4a4a; text-align: center; 
 // Validates key, expiry, blacklist, HWID and script state, then returns the script.
 // Errors are returned as Lua that warns in the executor, so the user sees why nothing ran.
 const usedNonces = new Map();
-function payload(hid, key, hwid, n, ua, t) {
+function payload(hid, key, hwid, n, ua, t, pl, pu) {
   const enc = (m) => cipher(Buffer.from(m, 'utf8'), seedOf(String(key || ''), n || '1'));
   const deny = (msg) => enc('SYX0' + msg);
   const s = scriptByHid(hid);
@@ -268,7 +273,31 @@ function payload(hid, key, hwid, n, ua, t) {
   db.prepare('update scripts set runs=runs+1 where id=?').run(s.id);
   db.prepare('insert into execs(script_id,ts) values(?,?)').run(s.id, now());
   const body = Buffer.from(s.content, 'utf8');
+  if (s.webhook_on && s.webhook_url) sendExecWebhook(s, k, pl, pu);
   return enc('SYX2' + csum(body) + body.toString('utf8'));
+}
+
+// ---------- Webhook de ejecución (embed gris, en inglés) ----------
+const WEBHOOK_RE = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+function sendExecWebhook(s, k, placeId, robloxUser) {
+  const name = s.name || s.slug;
+  const payload = {
+    username: 'SynexProtect',
+    embeds: [{
+      author: { name: `User Execute (${name})` },
+      title: `${name} - Script executed`,
+      color: 0x2b2d31,
+      fields: [
+        { name: 'User (Roblox)', value: robloxUser || 'Unknown', inline: true },
+        { name: 'Executions (user)', value: String((k.uses || 0) + 1), inline: true },
+        { name: 'PlaceId', value: placeId || 'Unknown', inline: true },
+        { name: 'Key', value: `\`${k.k}\``, inline: false },
+      ],
+      footer: { text: 'SynexProtect Executes' },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+  fetch(s.webhook_url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
 }
 
 // ---------- Keys ----------
@@ -319,7 +348,7 @@ function resetHwid(k, s, force = false) {
 }
 
 module.exports = {
-  DAY, PLAN_MAX, PREMIUM_MAX, maxScripts, isAdminUser, ADMIN_IDS,
+  WEBHOOK_RE, DAY, PLAN_MAX, PREMIUM_MAX, maxScripts, isAdminUser, ADMIN_IDS,
   slugify, newHid, scriptBySlug, scriptByHid, scriptForOwner,
   runStats, loadstring, loaderLua, landingHtml, payload,
   createKeys, parseDuration, expired, resetHwid, normKey,
