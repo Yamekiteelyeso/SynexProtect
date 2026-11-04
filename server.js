@@ -136,12 +136,12 @@ app.get('/api/me', auth, (req, res) => {
   });
 });
 app.get('/api/scripts', auth, (req, res) => {
-  const rows = db.prepare('select id,slug,name,enabled,free,buyer_role_id,hwid_days,runs,created,(select count(*) from lkeys where script_id=scripts.id) keys from scripts where user_id=? order by id desc').all(req.user.id);
+  const rows = db.prepare('select id,hid,slug,name,enabled,free,buyer_role_id,hwid_days,runs,created,(select count(*) from lkeys where script_id=scripts.id) keys from scripts where user_id=? order by id desc').all(req.user.id);
   const b = base(req);
   res.json(rows.map((r) => {
     const k = db.prepare('select k from lkeys where script_id=? and blacklisted=0 order by id limit 1').get(r.id);
     const st = C.runStats(r.id);
-    return { ...r, loadstring: C.loadstring(r.slug, b, k && k.k), d1: st.d1, d7: st.d7, d30: st.d30 };
+    return { ...r, loadstring: C.loadstring(r.hid, b, k && k.k), d1: st.d1, d7: st.d7, d30: st.d30 };
   }));
 });
 app.post('/api/scripts', auth, (req, res) => {
@@ -153,7 +153,7 @@ app.post('/api/scripts', auth, (req, res) => {
   let slug = C.slugify(name);
   if (slug.length < 3) return res.status(400).json({ error: 'Nombre: 3-24 caracteres, letras, números o guiones' });
   if (C.scriptBySlug(slug)) slug = (slug.slice(0, 19) + '-' + crypto.randomBytes(2).toString('hex')).slice(0, 24);
-  db.prepare('insert into scripts(user_id,slug,name,content,free,created) values(?,?,?,?,?,?)').run(req.user.id, slug, String(name || slug).slice(0, 40), content, free ? 1 : 0, Date.now());
+  db.prepare('insert into scripts(user_id,hid,slug,name,content,free,created) values(?,?,?,?,?,?,?)').run(req.user.id, C.newHid(), slug, String(name || slug).slice(0, 40), content, free ? 1 : 0, Date.now());
   res.json({ ok: 1, slug });
 });
 app.patch('/api/scripts/:id', auth, ownScript, (req, res) => {
@@ -193,12 +193,12 @@ app.delete('/api/keys/:kid', auth, (req, res) => {
 // ---------- Archivos públicos del loader (v1) ----------
 app.get('/s/:slug', (req, res) => {
   const slug = String(req.params.slug).toLowerCase();
-  if (!C.scriptBySlug(slug)) return res.status(404).type('text/html').send('<h1>Script no encontrado</h1>');
+  if (!C.scriptByHid(slug)) return res.status(404).type('text/html').send('<h1>Not found</h1>');
   res.type('text/html').set('Cache-Control', 'no-store').send(C.landingHtml(slug, base(req)));
 });
 app.get('/files/v1/loaders/:file', (req, res) => {
   const slug = String(req.params.file).replace(/\.lua$/, '').toLowerCase();
-  const s = C.scriptBySlug(slug);
+  const s = C.scriptByHid(slug);
   if (!s) return res.status(404).type('text/plain').send('-- not found');
   if (req.accepts(['html', 'text']) === 'html' && !/Roblox/i.test(req.headers['user-agent'] || '')) return res.redirect(`/s/${slug}`);
   res.type('text/plain').set('Cache-Control', 'no-store').send(C.loaderLua(slug, base(req)));
