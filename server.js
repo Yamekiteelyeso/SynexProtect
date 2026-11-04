@@ -66,6 +66,7 @@ app.get('/auth/discord', (req, res) => {
   res.cookie('sxm', req.query.mode === 'register' ? 'register' : 'login', { httpOnly: true, sameSite: 'lax', maxAge: 6e5 });
   const u = new URL('https://discord.com/oauth2/authorize');
   u.search = new URLSearchParams({ client_id: CID, response_type: 'code', redirect_uri: `${base(req)}/auth/discord/callback`, scope: 'identify', state: st }).toString();
+  console.log('[oauth] redirect_uri enviada a Discord:', `${base(req)}/auth/discord/callback`);
   res.redirect(u.toString());
 });
 app.get('/auth/discord/callback', async (req, res) => {
