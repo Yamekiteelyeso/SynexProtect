@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Synex Protect</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0d0a12;color:#eee;margin:0;padding:20px;max-width:900px;margin:auto}
+h1{color:#f5a524}.card{background:#171221;border:1px solid #2c2340;border-radius:12px;padding:14px;margin:12px 0}
+button,a.btn{background:#f5a524;color:#111;border:0;border-radius:8px;padding:7px 12px;margin:3px;cursor:pointer;font-weight:600;text-decoration:none;display:inline-block}
+button.ghost{background:#2c2340;color:#eee}textarea,input{width:100%;box-sizing:border-box;background:#0d0a12;color:#eee;border:1px solid #2c2340;border-radius:8px;padding:8px;margin:6px 0}
+code{background:#0d0a12;padding:6px;display:block;border-radius:8px;overflow-x:auto;white-space:pre;color:#8ee0a0}
+small{color:#a89bc2}[hidden]{display:none!important}
+</style></head><body>
+<h1>Synex Protect</h1>
+<section id="login" hidden><div class="card"><p>Iniciá sesión con Discord para registrar tus scripts y usar el bot.</p><a class="btn" href="/auth/discord">Entrar con Discord</a></div></section>
+<section id="app" hidden>
+  <div class="card"><b id="who"></b><br><small>Para que el bot registre tus scripts, invitalo a tu servidor con el botón.</small><br><a class="btn" id="invite" target="_blank" rel="noopener">Añadir el bot a mi Discord</a> <button class="ghost" onclick="logout()">Salir</button></div>
+  <div class="card"><h3>Nuevo script</h3><input id="nm" placeholder="nombre-del-link (3-24)" maxlength="24"><textarea id="ct" rows="8" placeholder="-- pegá tu script Lua"></textarea><label><input type="checkbox" id="fr" style="width:auto"> Gratis (no pide key)</label><br><button onclick="create()">Crear script</button></div>
+  <div id="list"></div>
+</section>
+<script>
+const $=(s)=>document.querySelector(s), esc=(s)=>String(s??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(p,o={}){const r=await fetch(p,{method:o.m||'GET',headers:{'Content-Type':'application/json'},body:o.b?JSON.stringify(o.b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Error');return j;}
+async function boot(){try{const me=await api('/api/me');$('#who').textContent='@'+me.username+' · '+(me.admin?'Admin':me.plan)+' · '+(me.max==null?'scripts ilimitados':'máx. '+me.max+' scripts');$('#invite').href=me.invite;$('#login').hidden=true;$('#app').hidden=false;await list();}catch(e){$('#login').hidden=false;}}
+async function list(){const s=await api('/api/scripts');$('#list').innerHTML=s.map(x=>`<div class="card"><b>${esc(x.slug)}</b> <small>hoy ${x.d1} · 7d ${x.d7} · 30d ${x.d30} · ${x.keys} keys · HWID cada ${x.hwid_days} días · ${x.free?'gratis':'con key'} · ${x.enabled?'activo':'pausado'}</small><div><button onclick="copy('${esc(x.loadstring).replace(/\n/g,'\\n')}')">Copiar loadstring</button><button class="ghost" onclick="keys(${x.id})">Keys</button><button class="ghost" onclick="stats(${x.id})">Estadísticas</button><button class="ghost" onclick="gen(${x.id})">+ Keys</button><button class="ghost" onclick="tog(${x.id},${!x.enabled})">${x.enabled?'Pausar':'Activar'}</button><button class="ghost" onclick="free(${x.id},${!x.free})">${x.free?'Hacer con key':'Hacer gratis'}</button><button class="ghost" onclick="hw(${x.id})">Días HWID</button><button class="ghost" onclick="role(${x.id})">Rol comprador</button><button class="ghost" onclick="del(${x.id})">Borrar</button></div><pre><code>${esc(x.loadstring)}</code></pre><div id="k${x.id}"></div></div>`).join('')||'<p>Todavía no tenés scripts.</p>';}
+async function create(){try{await api('/api/scripts',{m:'POST',b:{name:$('#nm').value,content:$('#ct').value,free:$('#fr').checked}});$('#nm').value='';$('#ct').value='';await list();}catch(e){alert(e.message);}}
+async function keys(id){const k=await api(`/api/scripts/${id}/keys`);$('#k'+id).innerHTML=k.map(x=>`<div><code>${esc(x.k)}</code><small>${x.owner_discord_id?'canjeada por '+esc(x.owner_discord_id):'libre'} · ${x.uses} usos · ${x.blacklisted?'desactivada':''}</small></div>`).join('')||'<small>Sin keys</small>';}
+async function stats(id){const st=await api(`/api/scripts/${id}/stats`);const m=Math.max(1,...st.days);$('#k'+id).innerHTML='<div style="display:flex;align-items:flex-end;height:70px;gap:3px">'+st.days.map((v)=>`<div title="${v}" style="flex:1;background:#f5a524;height:${Math.max(2,Math.round(v/m*70))}px"></div>`).join('')+'</div><small>Últimos 14 días · hoy '+st.d1+' · 7d '+st.d7+' · 30d '+st.d30+' · total '+st.total+'</small>';}
+async function gen(id){const d=prompt('Días de validez (vacío = de por vida)','');const c=prompt('Cantidad (1-50)','1');try{await api(`/api/scripts/${id}/keys`,{m:'POST',b:{days:d||null,count:c||1}});await keys(id);}catch(e){alert(e.message);}}
+async function tog(id,v){await api('/api/scripts/'+id,{m:'PATCH',b:{enabled:v}});await list();}
+async function free(id,v){await api('/api/scripts/'+id,{m:'PATCH',b:{free:v}});await list();}
+async function hw(id){const d=prompt('Cada cuántos días se puede reiniciar el HWID (1-365)','7');if(d)await api('/api/scripts/'+id,{m:'PATCH',b:{hwid_days:d}});await list();}
+async function role(id){const r=prompt('ID del rol de comprador (clic derecho en el rol > Copiar ID)','');if(r!=null)await api('/api/scripts/'+id,{m:'PATCH',b:{buyer_role_id:r.trim()}});await list();}
+async function del(id){if(confirm('¿Borrar el script y sus keys? No se puede deshacer.')){await api('/api/scripts/'+id,{m:'DELETE'});await list();}}
+function copy(t){navigator.clipboard.writeText(t.replace(/\\n/g,'\n')).then(()=>alert('Loadstring copiado'),()=>alert('No pude copiar'));}
+async function logout(){await api('/api/logout',{m:'POST'});location.reload();}
+boot();
+</script></body></html>
