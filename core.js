@@ -9,7 +9,11 @@ const now = () => Date.now();
 const esc = (x) => String(x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ---------- Plan ----------
-const maxScripts = (user) => (user && user.admin ? Infinity : user && user.plan === 'pro' ? PREMIUM_MAX : PLAN_MAX);
+// Admins: solo los IDs de Discord de ADMIN_IDS (o la variable de entorno ADMIN_IDS).
+const ADMIN_IDS = (process.env.ADMIN_IDS || '1518079144590573690,1244463634411683866').split(',').map((x) => x.trim()).filter(Boolean);
+const isAdminUser = (user) => !!user && !!user.discord_id && ADMIN_IDS.includes(String(user.discord_id));
+// Plus y admins: scripts ilimitados. Premium: PREMIUM_MAX. Free: PLAN_MAX.
+const maxScripts = (user) => (isAdminUser(user) || (user && user.plan === 'plus') ? Infinity : user && user.plan === 'premium' ? PREMIUM_MAX : PLAN_MAX);
 
 // ---------- Scripts ----------
 const slugify = (name) => String(name || '')
@@ -280,7 +284,7 @@ function resetHwid(k, s, force = false) {
 }
 
 module.exports = {
-  DAY, PLAN_MAX, PREMIUM_MAX, maxScripts,
+  DAY, PLAN_MAX, PREMIUM_MAX, maxScripts, isAdminUser, ADMIN_IDS,
   slugify, newHid, scriptBySlug, scriptByHid, scriptForOwner,
   runStats, loadstring, loaderLua, landingHtml, payload,
   createKeys, parseDuration, expired, resetHwid, normKey,
