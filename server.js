@@ -14,6 +14,8 @@ const rnd = (chars, n) => { let s = ''; for (let i = 0; i < n; i++) s += chars[c
 try { db.exec('alter table plan_keys add column dur integer'); } catch {}
 try { db.exec('alter table users add column plan_expires integer'); } catch {}
 try { db.exec('alter table users add column banned integer default 0'); } catch {}
+try { db.exec('alter table scripts add column webhook_url text'); } catch {}
+try { db.exec('alter table scripts add column webhook_on integer default 0'); } catch {}
 try { db.exec('alter table users add column blacklisted integer default 0'); } catch {}
 // Duraciones de llaves de plan (m = mes, no minuto)
 const PLAN_DUR = { '1s': 1e3, '1d': 864e5, '2d': 2 * 864e5, '1w': 7 * 864e5, '1m': 30 * 864e5, '1y': 365 * 864e5, perma: 0 };
@@ -156,7 +158,7 @@ app.get('/api/me', auth, (req, res) => {
   });
 });
 app.get('/api/scripts', auth, (req, res) => {
-  const rows = db.prepare('select id,hid,slug,name,enabled,free,expiry_dm,buyer_role_id,hwid_days,runs,created,(select count(*) from lkeys where script_id=scripts.id) keys from scripts where user_id=? order by id desc').all(req.user.id);
+  const rows = db.prepare('select id,hid,slug,name,enabled,free,expiry_dm,buyer_role_id,hwid_days,runs,webhook_url,webhook_on,created,(select count(*) from lkeys where script_id=scripts.id) keys from scripts where user_id=? order by id desc').all(req.user.id);
   const b = base(req);
   res.json(rows.map((r) => {
     const k = db.prepare('select k from lkeys where script_id=? and blacklisted=0 order by id limit 1').get(r.id);
@@ -176,6 +178,9 @@ app.post('/api/scripts', auth, (req, res) => {
   if (slug.length < 3) return res.status(400).json({ error: 'Nombre: 3-24 caracteres, letras, números o guiones' });
   if (C.scriptBySlug(slug)) slug = (slug.slice(0, 19) + '-' + crypto.randomBytes(2).toString('hex')).slice(0, 24);
   db.prepare('insert into scripts(user_id,hid,slug,name,content,free,created) values(?,?,?,?,?,?,?)').run(req.user.id, C.newHid(), slug, String(name || slug).slice(0, 40), content, free ? 1 : 0, Date.now());
+  const wh = String((req.body || {}).webhook_url || '').trim();
+  const wsc = db.prepare('select id from scripts where slug=? and user_id=?').get(slug, req.user.id);
+  if (wsc) db.prepare('update scripts set webhook_url=?, webhook_on=? where id=?').run(C.WEBHOOK_RE.test(wh) ? wh : null, (req.body || {}).webhook_on && C.WEBHOOK_RE.test(wh) ? 1 : 0, wsc.id);
   res.json({ ok: 1, slug });
 });
 app.patch('/api/scripts/:id', auth, ownScript, (req, res) => {
@@ -184,6 +189,12 @@ app.patch('/api/scripts/:id', auth, ownScript, (req, res) => {
   if (typeof b.free === 'boolean') db.prepare('update scripts set free=? where id=?').run(b.free ? 1 : 0, req.script.id);
   if (typeof b.expiry_dm === 'boolean') db.prepare('update scripts set expiry_dm=? where id=?').run(b.expiry_dm ? 1 : 0, req.script.id);
   if (typeof b.buyer_role_id === 'string') db.prepare('update scripts set buyer_role_id=? where id=?').run(/^\d{5,25}$/.test(b.buyer_role_id) ? b.buyer_role_id : null, req.script.id);
+  if (typeof b.webhook_url === 'string') {
+    const w = b.webhook_url.trim();
+    if (w && !C.WEBHOOK_RE.test(w)) return res.status(400).json({ error: 'Webhook de Discord inválido' });
+    db.prepare('update scripts set webhook_url=? where id=?').run(w || null, req.script.id);
+  }
+  if (typeof b.webhook_on === 'boolean') db.prepare('update scripts set webhook_on=? where id=?').run(b.webhook_on ? 1 : 0, req.script.id);
   if (b.hwid_days != null) {
     const d = Math.min(365, Math.max(1, parseInt(b.hwid_days, 10) || 7));
     db.prepare('update scripts set hwid_days=? where id=?').run(d, req.script.id);
@@ -333,7 +344,9 @@ app.get('/files/v1/payload/:slug', (req, res) => {
   const q = req.query;
   const key = String(q.k || ''), hwid = String(q.h || ''), n = String(q.n || '');
   if (!/^\d{1,10}$/.test(n) || !/^[A-Za-z0-9_.-]{1,80}$/.test(hwid) && hwid !== '') return res.status(400).end();
-  const buf = C.payload(String(req.params.slug).toLowerCase(), key, hwid, n, req.headers['user-agent'], q.t);
+  const pl = /^\d{1,20}$/.test(String(q.p || '')) ? String(q.p) : '';
+  const pu = /^[A-Za-z0-9_]{0,20}$/.test(String(q.u || '')) ? String(q.u) : '';
+  const buf = C.payload(String(req.params.slug).toLowerCase(), key, hwid, n, req.headers['user-agent'], q.t, pl, pu);
   res.type('application/octet-stream').set('Cache-Control', 'no-store').send(buf);
 });
 
