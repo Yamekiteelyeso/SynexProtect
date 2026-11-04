@@ -12,12 +12,21 @@ const scriptForOwner = (slug, discordId) => db.prepare('select s.* from scripts 
 const expired = (k) => k.expires_at != null && k.expires_at < Date.now();
 const loadstring = (slug, base, key) => `script_key="${key || 'TU_KEY'}";\nloadstring(game:HttpGet("${base}/files/v1/loaders/${slug}.lua"))()`;
 
-function createKeys(scriptId, { days = null, count = 1, owner = null } = {}) {
+const UNIT = { s: 1e3, m: 6e4, h: 36e5, d: DAY, w: 7 * DAY, y: 365 * DAY };
+// "30s", "5m", "1h", "1d", "1w", "1y" -> ms. "perma"/vacío -> null (de por vida). Inválido -> undefined.
+function parseDuration(v) {
+  const t = String(v || '').trim().toLowerCase();
+  if (!t || t === 'perma' || t === 'permanent' || t === 'lifetime') return null;
+  const m = /^(\d{1,4})\s*([smhdwy])$/.exec(t);
+  return m ? Number(m[1]) * UNIT[m[2]] : undefined;
+}
+function createKeys(scriptId, { days = null, ms = null, count = 1, owner = null } = {}) {
+  const span = ms != null ? ms : days ? days * DAY : null;
   const ins = db.prepare('insert into lkeys(script_id,k,owner_discord_id,expires_at,created) values(?,?,?,?,?)');
   const out = [];
   for (let i = 0; i < count; i++) {
     const k = newKey();
-    ins.run(scriptId, k, owner, days ? Date.now() + days * DAY : null, Date.now());
+    ins.run(scriptId, k, owner, span ? Date.now() + span : null, Date.now());
     out.push(k);
   }
   return out;
@@ -128,4 +137,4 @@ button{background:#f5a524;color:#111;border:0;border-radius:10px;padding:10px 16
 <pre id="ls">${esc(ls)}</pre><button onclick="navigator.clipboard.writeText(document.getElementById('ls').innerText).then(()=>this.textContent='¡Copiado!')">Copiar loadstring</button>
 </div></body></html>`;
 }
-module.exports = { runStats, landingHtml,  DAY, PLAN_MAX, newKey, slugify, maxScripts, scriptBySlug, scriptForOwner, expired, loadstring, createKeys, resetHwid, seedOf, cipher, payload, loaderLua };
+module.exports = { parseDuration, runStats, landingHtml,  DAY, PLAN_MAX, newKey, slugify, maxScripts, scriptBySlug, scriptForOwner, expired, loadstring, createKeys, resetHwid, seedOf, cipher, payload, loaderLua };
