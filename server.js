@@ -11,6 +11,10 @@ const C = require('./core');
 db.exec('create table if not exists plan_keys(id integer primary key, k text unique not null, plan text not null, created integer, used_by integer, used_at integer);');
 const RU = 'ABCDEFGHJKLMNPQRSTUVWXYZ', RD = '0123456789', RM = RU + RD + 'abcdefghjkmnpqrstuvwxyz';
 const rnd = (chars, n) => { let s = ''; for (let i = 0; i < n; i++) s += chars[crypto.randomInt(chars.length)]; return s; };
+try { db.exec('alter table plan_keys add column dur integer'); } catch {}
+try { db.exec('alter table users add column plan_expires integer'); } catch {}
+// Duraciones de llaves de plan (m = mes, no minuto)
+const PLAN_DUR = { '1s': 1e3, '1d': 864e5, '2d': 2 * 864e5, '1w': 7 * 864e5, '1m': 30 * 864e5, '1y': 365 * 864e5, perma: 0 };
 const genPlanKey = (plan) => plan === 'plus'
   ? `PLUS_${rnd(RD, 4)}${rnd(RU, 5)}${rnd(RM, 5)}-${rnd(RD, 2)}`
   : `PREMIUM_${rnd(RM, 8)}${rnd(RD, 5)}${rnd(RM, 4)}_${rnd(RD, 2)}`;
@@ -61,6 +65,7 @@ function auth(req, res, next) {
     const p = jwt.verify(req.cookies.sx || '', SECRET);
     const u = db.prepare('select * from users where id=?').get(p.id);
     if (!u) throw new Error('no user');
+    if (u.plan_expires && u.plan_expires < Date.now()) { db.prepare('update users set plan=?, plan_expires=null where id=?').run('free', u.id); u.plan = 'free'; u.plan_expires = null; }
     req.user = u;
     next();
   } catch { res.status(401).json({ error: 'Iniciá sesión con Discord' }); }
@@ -207,7 +212,8 @@ app.post('/api/plan/redeem', auth, (req, res) => {
   const k = db.prepare('select * from plan_keys where k=? and used_by is null').get(code);
   if (!k) return res.status(404).json({ error: 'Llave inválida o ya usada' });
   db.prepare('update plan_keys set used_by=?, used_at=? where id=?').run(req.user.id, Date.now(), k.id);
-  db.prepare('update users set plan=? where id=?').run(k.plan, req.user.id);
+  const exp = k.dur ? Date.now() + k.dur : null;
+  db.prepare('update users set plan=?, plan_expires=? where id=?').run(k.plan, exp, req.user.id);
   res.json({ ok: 1, plan: k.plan });
 });
 
@@ -221,7 +227,7 @@ app.get('/api/admin/overview', auth, adminOnly, (req, res) => {
     (select count(*) from lkeys where script_id=s.id) keys from scripts s left join users u on u.id=s.user_id order by s.id desc limit 300`).all()
     .map((s) => ({ ...s, d30: C.runStats(s.id).d30 }));
   const users = db.prepare('select id,username,discord_id,email,plan,created from users order by id desc limit 300').all();
-  const plankeys = db.prepare(`select pk.id,pk.k,pk.plan,pk.created,pk.used_at,u.username used_by from plan_keys pk
+  const plankeys = db.prepare(`select pk.id,pk.k,pk.plan,pk.dur,pk.created,pk.used_at,u.username used_by from plan_keys pk
     left join users u on u.id=pk.used_by order by pk.id desc limit 200`).all();
   res.json({ scripts, users, plankeys, totals: { users: users.length, scripts: scripts.length, keys: scripts.reduce((a, s) => a + (s.keys || 0), 0), runs30: scripts.reduce((a, s) => a + (s.d30 || 0), 0) } });
 });
@@ -229,9 +235,11 @@ app.post('/api/admin/plankeys', auth, adminOnly, (req, res) => {
   const plan = (req.body || {}).plan === 'plus' ? 'plus' : (req.body || {}).plan === 'premium' ? 'premium' : null;
   if (!plan) return res.status(400).json({ error: 'Plan inválido' });
   const count = Math.min(50, Math.max(1, parseInt((req.body || {}).count, 10) || 1));
-  const ins = db.prepare('insert into plan_keys(k,plan,created) values(?,?,?)');
+  const durName = Object.prototype.hasOwnProperty.call(PLAN_DUR, (req.body || {}).dur) ? (req.body || {}).dur : null;
+  if (!durName) return res.status(400).json({ error: 'Duración inválida' });
+  const ins = db.prepare('insert into plan_keys(k,plan,dur,created) values(?,?,?,?)');
   const keys = [];
-  for (let i = 0; i < count; i++) { const k = genPlanKey(plan); ins.run(k, plan, Date.now()); keys.push(k); }
+  for (let i = 0; i < count; i++) { const k = genPlanKey(plan); ins.run(k, plan, PLAN_DUR[durName] || null, Date.now()); keys.push(k); }
   res.json({ keys });
 });
 app.delete('/api/admin/plankeys/:id', auth, adminOnly, (req, res) => {
@@ -244,14 +252,14 @@ app.post('/api/admin/grant', auth, adminOnly, (req, res) => {
   if (!/^\d{5,25}$/.test(id)) return res.status(400).json({ error: 'Discord ID inválido' });
   if (!['free', 'premium', 'plus'].includes(plan)) return res.status(400).json({ error: 'Plan inválido' });
   const u = db.prepare('select id from users where discord_id=?').get(id);
-  if (u) db.prepare('update users set plan=? where id=?').run(plan, u.id);
+  if (u) db.prepare('update users set plan=?, plan_expires=null where id=?').run(plan, u.id);
   else db.prepare('insert into users(discord_id,username,plan,created) values(?,?,?,?)').run(id, 'user' + id.slice(-6), plan, Date.now());
   res.json({ ok: 1 });
 });
 app.post('/api/admin/users/:id/plan', auth, adminOnly, (req, res) => {
   const plan = (req.body || {}).plan;
   if (!['free', 'premium', 'plus'].includes(plan)) return res.status(400).json({ error: 'Plan inválido' });
-  db.prepare('update users set plan=? where id=?').run(plan, Number(req.params.id));
+  db.prepare('update users set plan=?, plan_expires=null where id=?').run(plan, Number(req.params.id));
   res.json({ ok: 1 });
 });
 app.patch('/api/admin/scripts/:id', auth, adminOnly, (req, res) => {
