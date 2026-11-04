@@ -7,6 +7,14 @@ const jwt = require('jsonwebtoken');
 const db = require('./db');
 const C = require('./core');
 
+// ---------- Llaves de plan (Premium / Plus) ----------
+db.exec('create table if not exists plan_keys(id integer primary key, k text unique not null, plan text not null, created integer, used_by integer, used_at integer);');
+const RU = 'ABCDEFGHJKLMNPQRSTUVWXYZ', RD = '0123456789', RM = RU + RD + 'abcdefghjkmnpqrstuvwxyz';
+const rnd = (chars, n) => { let s = ''; for (let i = 0; i < n; i++) s += chars[crypto.randomInt(chars.length)]; return s; };
+const genPlanKey = (plan) => plan === 'plus'
+  ? `PLUS_${rnd(RD, 4)}${rnd(RU, 5)}${rnd(RM, 5)}-${rnd(RD, 2)}`
+  : `PREMIUM_${rnd(RM, 8)}${rnd(RD, 5)}${rnd(RM, 4)}_${rnd(RD, 2)}`;
+
 const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '105mb' }));
@@ -130,7 +138,7 @@ app.post('/api/logout', (req, res) => { res.clearCookie('sx'); res.json({ ok: 1 
 app.get('/api/me', auth, (req, res) => {
   const max = C.maxScripts(req.user);
   res.json({
-    username: req.user.username, email: req.user.email || null, discord: !!req.user.discord_id, admin: !!req.user.admin, plan: req.user.plan,
+    username: req.user.username, email: req.user.email || null, discord: !!req.user.discord_id, admin: C.isAdminUser(req.user), is_admin: C.isAdminUser(req.user), plan: req.user.plan,
     max: max === Infinity ? null : max,
     invite: `https://discord.com/oauth2/authorize?client_id=${CID}&scope=bot+applications.commands&permissions=8`,
   });
@@ -148,8 +156,8 @@ app.post('/api/scripts', auth, (req, res) => {
   const { name, content, free } = req.body || {};
   const count = db.prepare('select count(*) c from scripts where user_id=?').get(req.user.id).c;
   const max = C.maxScripts(req.user);
-  if (count >= max) return res.status(403).json({ error: `You already have ${max} scripts. Delete one or buy the premium subscription to have ${C.PREMIUM_MAX} scripts.` });
-  const limit = req.user.admin ? 100 * 1048576 : 1048576;
+  if (count >= max) return res.status(403).json({ error: `You already have ${max} scripts. Delete one or upgrade your plan.` });
+  const limit = C.isAdminUser(req.user) ? 100 * 1048576 : 1048576;
   if (typeof content !== 'string' || !content.trim() || Buffer.byteLength(content) > limit) return res.status(400).json({ error: `Script vacío o pesa más de ${req.user.admin ? '100 MB' : '1 MB'}` });
   let slug = C.slugify(name);
   if (slug.length < 3) return res.status(400).json({ error: 'Nombre: 3-24 caracteres, letras, números o guiones' });
@@ -189,6 +197,65 @@ app.delete('/api/keys/:kid', auth, (req, res) => {
   const k = db.prepare('select lkeys.id from lkeys join scripts s on s.id=lkeys.script_id join users u on u.id=s.user_id where lkeys.id=? and u.id=?').get(Number(req.params.kid), req.user.id);
   if (!k) return res.status(404).json({ error: 'No existe' });
   db.prepare('delete from lkeys where id=?').run(k.id);
+  res.json({ ok: 1 });
+});
+
+// ---------- Canjear llave de plan ----------
+app.post('/api/plan/redeem', auth, (req, res) => {
+  const code = String((req.body || {}).code || '').trim();
+  if (!code.startsWith('PREMIUM_') && !code.startsWith('PLUS_')) return res.status(400).json({ error: 'Formato de llave inválido' });
+  const k = db.prepare('select * from plan_keys where k=? and used_by is null').get(code);
+  if (!k) return res.status(404).json({ error: 'Llave inválida o ya usada' });
+  db.prepare('update plan_keys set used_by=?, used_at=? where id=?').run(req.user.id, Date.now(), k.id);
+  db.prepare('update users set plan=? where id=?').run(k.plan, req.user.id);
+  res.json({ ok: 1, plan: k.plan });
+});
+
+// ---------- Admin (solo IDs de ADMIN_IDS) ----------
+function adminOnly(req, res, next) {
+  if (!C.isAdminUser(req.user)) return res.status(403).json({ error: 'Solo admins' });
+  next();
+}
+app.get('/api/admin/overview', auth, adminOnly, (req, res) => {
+  const scripts = db.prepare(`select s.id,s.slug,s.name,s.enabled,s.runs,u.username owner,
+    (select count(*) from lkeys where script_id=s.id) keys from scripts s left join users u on u.id=s.user_id order by s.id desc limit 300`).all()
+    .map((s) => ({ ...s, d30: C.runStats(s.id).d30 }));
+  const users = db.prepare('select id,username,discord_id,email,plan,created from users order by id desc limit 300').all();
+  const plankeys = db.prepare(`select pk.id,pk.k,pk.plan,pk.created,pk.used_at,u.username used_by from plan_keys pk
+    left join users u on u.id=pk.used_by order by pk.id desc limit 200`).all();
+  res.json({ scripts, users, plankeys, totals: { users: users.length, scripts: scripts.length, keys: scripts.reduce((a, s) => a + (s.keys || 0), 0), runs30: scripts.reduce((a, s) => a + (s.d30 || 0), 0) } });
+});
+app.post('/api/admin/plankeys', auth, adminOnly, (req, res) => {
+  const plan = (req.body || {}).plan === 'plus' ? 'plus' : (req.body || {}).plan === 'premium' ? 'premium' : null;
+  if (!plan) return res.status(400).json({ error: 'Plan inválido' });
+  const count = Math.min(50, Math.max(1, parseInt((req.body || {}).count, 10) || 1));
+  const ins = db.prepare('insert into plan_keys(k,plan,created) values(?,?,?)');
+  const keys = [];
+  for (let i = 0; i < count; i++) { const k = genPlanKey(plan); ins.run(k, plan, Date.now()); keys.push(k); }
+  res.json({ keys });
+});
+app.delete('/api/admin/plankeys/:id', auth, adminOnly, (req, res) => {
+  db.prepare('delete from plan_keys where id=? and used_by is null').run(Number(req.params.id));
+  res.json({ ok: 1 });
+});
+app.post('/api/admin/grant', auth, adminOnly, (req, res) => {
+  const { discord_id, plan } = req.body || {};
+  const id = String(discord_id || '').trim();
+  if (!/^\d{5,25}$/.test(id)) return res.status(400).json({ error: 'Discord ID inválido' });
+  if (!['free', 'premium', 'plus'].includes(plan)) return res.status(400).json({ error: 'Plan inválido' });
+  const u = db.prepare('select id from users where discord_id=?').get(id);
+  if (u) db.prepare('update users set plan=? where id=?').run(plan, u.id);
+  else db.prepare('insert into users(discord_id,username,plan,created) values(?,?,?,?)').run(id, 'user' + id.slice(-6), plan, Date.now());
+  res.json({ ok: 1 });
+});
+app.post('/api/admin/users/:id/plan', auth, adminOnly, (req, res) => {
+  const plan = (req.body || {}).plan;
+  if (!['free', 'premium', 'plus'].includes(plan)) return res.status(400).json({ error: 'Plan inválido' });
+  db.prepare('update users set plan=? where id=?').run(plan, Number(req.params.id));
+  res.json({ ok: 1 });
+});
+app.patch('/api/admin/scripts/:id', auth, adminOnly, (req, res) => {
+  if (typeof (req.body || {}).enabled === 'boolean') db.prepare('update scripts set enabled=? where id=?').run(req.body.enabled ? 1 : 0, Number(req.params.id));
   res.json({ ok: 1 });
 });
 
