@@ -441,6 +441,10 @@ async function onCommand(i) {
     const dur = C.parseDuration(i.options.getString('duration'));
     if (dur === undefined) return sayE(i, [errEmbed('Invalid duration. Use e.g. 7d, 1m, 1y or perma.')]);
     const key = grantToUser(s.id, u.id, dur || null);
+    const panel = db.prepare('select * from panels where script_id=?').get(s.id);
+    const where = panel ? `<#${panel.channel_id}>` : `<#${i.channelId}>`;
+    const grayEmbed = new EmbedBuilder().setColor(0x2b2d31).setDescription(`You can access the script via this message --> ${where}`);
+    if (i.channel) await i.channel.send({ content: `<@${u.id}> You have been whitelisted!`, embeds: [grayEmbed] }).catch((e) => console.error('[wl msg]', e.message));
     let roleNote = '';
     if (s.buyer_role_id) {
       try { const m = await i.guild.members.fetch(u.id); await m.roles.add(s.buyer_role_id); }
@@ -577,6 +581,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 
 client.once('ready', async () => {
   console.log('[bot] connected as', client.user.tag);
+  for (const g of client.guilds.cache.values()) paintBotRole(g);
   setTimeout(() => sweepExpiries(), 30e3);
   setInterval(() => sweepExpiries(), 60e3);
   try {
@@ -600,6 +605,17 @@ client.once('ready', async () => {
     }
   } catch (e) { console.error('[bot] commands:', e.message); }
 });
+
+// Rol del bot con color #2a2b2c al entrar a un server (y al arrancar para los que ya tiene)
+const BOT_ROLE_COLOR = 0x2a2b2c;
+async function paintBotRole(guild) {
+  try {
+    const me = await guild.members.fetchMe();
+    const r = me.roles.botRole;
+    if (r && r.color !== BOT_ROLE_COLOR) await r.setColor(BOT_ROLE_COLOR);
+  } catch (e) { console.error('[color]', e.message); }
+}
+client.on('guildCreate', (guild) => paintBotRole(guild));
 
 client.on('error', (e) => console.error('[bot] client error:', e.message));
 client.on('shardError', (e) => console.error('[bot] shard error:', e.message));
