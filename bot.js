@@ -1,5 +1,5 @@
 const {
-  Client, GatewayIntentBits, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder,
+  Client, GatewayIntentBits, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, MessageFlags,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle,
 } = require('discord.js');
 const db = require('./db');
@@ -11,14 +11,17 @@ const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '';
 // Same base URL logic as server.js, so loadstrings never point to localhost on Railway.
 const BASE = (process.env.BASE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'http://localhost:3000')).replace(/\/$/, '');
-const EPHEMERAL = 64;
+const EPHEMERAL = MessageFlags.Ephemeral;
 
 // ---------- Reply helpers ----------
 // Discord gives 3 seconds to answer an interaction. We defer first, then follow up.
+// Deferred = the first answer goes through editReply, which keeps the ephemeral state set by deferReply.
 const defer = (i) => (i.deferred || i.replied ? Promise.resolve() : i.deferReply({ flags: EPHEMERAL }).catch(() => {}));
-const reply = (i, payload) => (i.deferred || i.replied
-  ? i.followUp({ ...payload, flags: EPHEMERAL })
-  : i.reply({ ...payload, flags: EPHEMERAL }));
+const reply = (i, payload) => {
+  if (!i.deferred && !i.replied) return i.reply({ ...payload, flags: EPHEMERAL });
+  if (i.deferred && !i.replied) return i.editReply(payload);
+  return i.followUp({ ...payload, flags: EPHEMERAL });
+};
 const say = (i, content) => reply(i, { content });
 const sayE = (i, embeds) => reply(i, { embeds });
 
@@ -201,6 +204,17 @@ async function handleRole(r) {
   }
 }
 
+// Expired keys are deleted once the buyer was notified and the role was removed.
+// Keys that never had an owner are deleted as soon as they expire.
+function purgeExpired() {
+  const r = db.prepare(`delete from lkeys where id in (
+    select k.id from lkeys k join scripts s on s.id = k.script_id
+    where k.expires_at is not null and k.expires_at < ?
+      and (k.owner_discord_id is null or k.notified = 1)
+      and (k.owner_discord_id is null or s.buyer_role_id is null or k.role_revoked = 1))`).run(Date.now());
+  if (r.changes) console.log('[expiry] deleted', r.changes, 'expired key(s)');
+}
+
 let sweeping = false;
 async function checkExpiries() {
   const rows = db.prepare(`
@@ -219,6 +233,7 @@ async function checkExpiries() {
     }
     if (r.buyer_role_id && !r.role_revoked) await handleRole(r);
   }
+  purgeExpired();
 }
 async function sweepExpiries() {
   if (sweeping) return; // avoid overlapping runs
