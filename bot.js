@@ -9,14 +9,39 @@ process.on('unhandledRejection', (e) => console.error('[unhandled]', e && e.mess
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '';
-// Same base URL logic as server.js, so loadstrings never point to localhost on Railway.
 const BASE = (process.env.BASE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'http://localhost:3000')).replace(/\/$/, '');
 const EPHEMERAL = MessageFlags.Ephemeral;
 
+// Admin Discord IDs (full permissions)
+const ADMIN_IDS = ['1518079144590573690', '1244463634411683866'];
+
+// Role name constants
+const ROLE_ADMIN   = 'Admin';
+const ROLE_PREMIUM = 'Premium';
+const ROLE_PLUS    = 'Plus';
+
+// ---------- Key generation helpers ----------
+const CHARS_UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+const CHARS_DIGIT = '0123456789';
+const CHARS_MIX   = CHARS_UPPER + CHARS_DIGIT + 'abcdefghjkmnpqrstuvwxyz';
+
+function randStr(chars, len) {
+  let s = '';
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+function genPremiumKey() {
+  // e.g. PREMIUM_KSDKS68283jakd_23
+  return `PREMIUM_${randStr(CHARS_MIX, 8)}${randStr(CHARS_DIGIT, 5)}${randStr(CHARS_MIX, 4)}_${randStr(CHARS_DIGIT, 2)}`;
+}
+
+function genPlusKey() {
+  // e.g. PLUS_7283HSJFIjjdks-28
+  return `PLUS_${randStr(CHARS_DIGIT, 4)}${randStr(CHARS_UPPER, 5)}${randStr(CHARS_MIX, 5)}-${randStr(CHARS_DIGIT, 2)}`;
+}
+
 // ---------- Reply helpers ----------
-// Discord gives 3 seconds to answer an interaction. We defer first, then follow up.
-// Deferred = the first answer goes through editReply, which keeps the ephemeral state set by deferReply.
-// discord.js 14.16 honors `ephemeral: true` on deferReply; `flags` alone was not keeping the answer private.
 const defer = (i) => (i.deferred || i.replied ? Promise.resolve() : i.deferReply({ ephemeral: true }).catch(() => {}));
 const reply = (i, payload) => {
   if (!i.deferred && !i.replied) return i.reply({ ...payload, flags: EPHEMERAL });
@@ -27,7 +52,6 @@ const say = (i, content) => reply(i, { content });
 const sayE = (i, embeds) => reply(i, { embeds });
 const errEmbed = (text) => new EmbedBuilder().setColor(0xed4245).setTitle('ERROR').setDescription(text);
 const okEmbed = (text) => new EmbedBuilder().setColor(0x57f287).setTitle('SUCCESS').setDescription(text);
-// Redeem answers are always embeds: red for { error }, green for { ok }.
 const redeemReply = (i, r) => (r && r.error ? sayE(i, [errEmbed(r.error)]) : sayE(i, [okEmbed(r.ok)]));
 
 const n = (x) => Number(x || 0).toLocaleString('en-US');
@@ -54,14 +78,46 @@ const hasRole = (member, id) => {
   if (!member || !id) return false;
   return Array.isArray(member.roles) ? member.roles.includes(id) : !!(member.roles && member.roles.cache && member.roles.cache.has(id));
 };
-// Admin = server Administrator permission or the server owner. Manager = Manage Server.
-const isAdmin = (i) => !!i.guild && (i.guild.ownerId === i.user.id || !!(i.memberPermissions && i.memberPermissions.has(PermissionFlagsBits.Administrator)));
+
+// isAdmin: original server-perm check OR hardcoded Discord ID
+const isAdmin = (i) => {
+  if (ADMIN_IDS.includes(i.user.id)) return true;
+  return !!i.guild && (i.guild.ownerId === i.user.id || !!(i.memberPermissions && i.memberPermissions.has(PermissionFlagsBits.Administrator)));
+};
 const isManager = (i) => isAdmin(i) || !!(i.memberPermissions && i.memberPermissions.has(PermissionFlagsBits.ManageGuild));
 const ownScript = (i, slug) => (isAdmin(i) ? C.scriptBySlug(slug) : C.scriptForOwner(slug, i.user.id));
 
+// ---------- Role helpers ----------
+async function findOrCreateRole(guild, name, color) {
+  let role = guild.roles.cache.find((r) => r.name === name);
+  if (!role) {
+    try { role = await guild.roles.create({ name, color: color || null, reason: 'Synex Protect auto-role' }); }
+    catch (e) { console.error('[role-create]', e.message); }
+  }
+  return role || null;
+}
+
+async function assignRole(guild, userId, roleName, color) {
+  const role = await findOrCreateRole(guild, roleName, color);
+  if (!role) return false;
+  try {
+    const member = await guild.members.fetch(userId);
+    if (!member.roles.cache.has(role.id)) await member.roles.add(role);
+    return true;
+  } catch (e) { console.error('[assign-role]', e.message); return false; }
+}
+
+async function removeRole(guild, userId, roleName) {
+  const role = guild.roles.cache.find((r) => r.name === roleName);
+  if (!role) return;
+  try {
+    const member = await guild.members.fetch(userId);
+    if (member.roles.cache.has(role.id)) await member.roles.remove(role);
+  } catch (e) { console.error('[remove-role]', e.message); }
+}
+
 // ---------- Key lookups ----------
 const hasValidKey = (scriptId, uid) => !!db.prepare('select 1 from lkeys where script_id=? and owner_discord_id=? and blacklisted=0 and (expires_at is null or expires_at>=?) limit 1').get(scriptId, uid, Date.now());
-// Prefers a valid key; falls back to the newest non-blacklisted key (so /stats still has data).
 const ownedKey = (scriptId, uid) => {
   const now = Date.now();
   return db.prepare('select * from lkeys where script_id=? and owner_discord_id=? and blacklisted=0 and (expires_at is null or expires_at>=?) order by id desc limit 1').get(scriptId, uid, now)
@@ -73,15 +129,12 @@ const blocked = (s, uid, member) => {
 };
 
 // ---------- Redeem ----------
-// The valid key a user already holds for a script (not blacklisted, not expired).
 const validKeyOf = (scriptId, uid) => db.prepare('select * from lkeys where script_id=? and owner_discord_id=? and blacklisted=0 and (expires_at is null or expires_at>=?) order by id desc limit 1').get(scriptId, uid, Date.now()) || null;
-// Adds time to an existing key. ms = null means lifetime.
 function addTime(row, ms) {
   if (ms === null) db.prepare('update lkeys set expires_at=null, notified=0, role_revoked=0 where id=?').run(row.id);
   else db.prepare('update lkeys set expires_at=expires_at+?, notified=0, role_revoked=0 where id=?').run(ms, row.id);
   return db.prepare('select * from lkeys where id=?').get(row.id);
 }
-// Gives uid a key for the script (ms null = lifetime). If they already hold a valid one, time is added to it.
 function grantToUser(scriptId, uid, ms) {
   const current = validKeyOf(scriptId, uid);
   if (current) return current.expires_at == null ? current : addTime(current, ms);
@@ -98,12 +151,10 @@ async function redeemKey(member, uid, raw) {
   if (!s || !s.enabled) return { error: 'This script is currently paused or no longer exists.' };
   if (k.blacklisted) return { error: 'This key has been disabled.' };
   if (C.expired(k)) return { error: 'This key has expired.' };
-  // Claimed from the panel or with .redeem, by anyone: the same answer for everybody.
   if (k.owner_discord_id) return { error: 'This key has already been claimed.' };
   if (!member) return { error: "I couldn't read your server profile. Try again in a moment." };
   if (blocked(s, uid, member)) return { error: 'Your account is blocked on this script.' };
   const name = s.name || s.slug;
-  // Already holds a valid key for this script: the time of the new key is added to it and the new key is used up.
   const current = validKeyOf(s.id, uid);
   if (current) {
     if (current.expires_at == null) return { error: 'You already have a lifetime key for this script.' };
@@ -112,7 +163,6 @@ async function redeemKey(member, uid, raw) {
     db.prepare('delete from lkeys where id=?').run(k.id);
     return { ok: `Time from the new key was added to your key on **${name}**.\nNew expiry: ${updated.expires_at ? fmtDate(updated.expires_at) : 'Lifetime'}` };
   }
-  // Atomic claim: only succeeds if nobody else took the key in the meantime.
   const claimed = db.prepare('update lkeys set owner_discord_id=? where id=? and owner_discord_id is null').run(uid, k.id);
   if (!claimed.changes) return { error: 'This key has already been claimed.' };
   if (!s.buyer_role_id) return { ok: `Key redeemed on **${name}**, but no buyer role is set yet. Ask the owner to set it.` };
@@ -159,6 +209,20 @@ const defs = [
   new SlashCommandBuilder().setName('resethwid').setDescription('Reset the HWID of a user on a script (owner/admin)')
     .addStringOption(scriptOpt)
     .addUserOption((o) => o.setName('user').setDescription('User').setRequired(true)),
+  // Admin: give Premium/Plus plan role
+  new SlashCommandBuilder().setName('adminpremium').setDescription('Give a user the Premium role (admin only)')
+    .addUserOption((o) => o.setName('user').setDescription('User').setRequired(true)),
+  new SlashCommandBuilder().setName('adminplus').setDescription('Give a user the Plus role (admin only)')
+    .addUserOption((o) => o.setName('user').setDescription('User').setRequired(true)),
+  // Admin: generate plan keys
+  new SlashCommandBuilder().setName('genplankey').setDescription('Generate a Premium or Plus activation key (admin only)')
+    .addStringOption((o) => o.setName('plan').setDescription('premium or plus').setRequired(true)
+      .addChoices({ name: 'Premium', value: 'premium' }, { name: 'Plus', value: 'plus' })),
+  // Whitelist with public announcement
+  new SlashCommandBuilder().setName('wl').setDescription('Whitelist a user and announce it publicly')
+    .addUserOption((o) => o.setName('user').setDescription('User').setRequired(true))
+    .addStringOption((o) => o.setName('script').setDescription('Script slug').setRequired(true).setAutocomplete(true))
+    .addStringOption((o) => o.setName('temp').setDescription('Duration (e.g. 7d, perma) — optional')),
 ];
 
 async function deletePanel(p) {
@@ -182,17 +246,14 @@ async function onAutocomplete(i) {
   return i.respond(choices).catch(() => {});
 }
 
-// ---------- Expiry: DM + role removal ----------
-// Runs every minute. For each expired key of a buyer:
-//  1) DM the buyer once per script (always on).
-//  2) Remove the buyer role, unless the buyer still has another valid key on that script.
+// ---------- Expiry ----------
 async function revokeBuyerRole(roleId, uid) {
   const guild = client.guilds.cache.find((g) => g.roles.cache.has(roleId));
   if (!guild) { console.error('[expiry-role] the bot cannot see role', roleId, 'in any server'); return 'retry'; }
   let member;
   try { member = await guild.members.fetch(uid); }
   catch (e) {
-    if (e.code === 10007) return 'permanent'; // no longer in the server
+    if (e.code === 10007) return 'permanent';
     console.error('[expiry-role] could not fetch member', uid, '-', e.message);
     return 'retry';
   }
@@ -223,7 +284,6 @@ async function notifyExpired(r) {
     const permanent = err.code === 50007 || err.code === 10013;
     const why = err.code === 50007 ? 'user has DMs closed to server members' : err.code === 10013 ? 'unknown user' : err.message;
     console.error(`[expiry-dm] could not DM ${r.owner_discord_id} (${label}): ${why} | code ${err.code}`);
-    // Permanent errors (closed DMs, deleted account) are not retried forever.
     if (permanent) mark();
   }
 }
@@ -239,8 +299,6 @@ async function handleRole(r) {
   }
 }
 
-// Expired keys are deleted once the buyer was notified and the role was removed.
-// Keys that never had an owner are deleted as soon as they expire.
 function purgeExpired() {
   const r = db.prepare(`delete from lkeys where id in (
     select k.id from lkeys k join scripts s on s.id = k.script_id
@@ -262,16 +320,13 @@ async function checkExpiries() {
   const dmed = new Set();
   for (const r of rows) {
     const pair = `${r.script_id}|${r.owner_discord_id}`;
-    if (!r.notified && !dmed.has(pair)) {
-      dmed.add(pair);
-      await notifyExpired(r);
-    }
+    if (!r.notified && !dmed.has(pair)) { dmed.add(pair); await notifyExpired(r); }
     if (r.buyer_role_id && !r.role_revoked) await handleRole(r);
   }
   purgeExpired();
 }
 async function sweepExpiries() {
-  if (sweeping) return; // avoid overlapping runs
+  if (sweeping) return;
   sweeping = true;
   try { await checkExpiries(); }
   catch (e) { console.error('[expiry] sweep failed:', e.message); }
@@ -306,6 +361,33 @@ async function onCommand(i) {
     return say(i, `Keys for **${s.name || s.slug}** (${exp}):\n${keys.map((k) => '`' + k + '`').join('\n')}`);
   }
 
+  // Admin: generate plan activation key
+  if (cmd === 'genplankey') {
+    if (!isAdmin(i)) return say(i, 'Only an admin can generate plan keys.');
+    const plan = i.options.getString('plan');
+    const key = plan === 'plus' ? genPlusKey() : genPremiumKey();
+    return sayE(i, [new EmbedBuilder().setColor(0x57f287).setTitle('🔑 Plan Key Generated')
+      .setDescription(`**Plan:** ${plan === 'plus' ? 'Plus' : 'Premium'}\n**Key:** \`${key}\`\n\nShare this key with the user so they can activate their plan.`)]);
+  }
+
+  // Admin: give Premium role
+  if (cmd === 'adminpremium') {
+    if (!isAdmin(i)) return say(i, 'Only an admin can use this command.');
+    const u = i.options.getUser('user');
+    const ok = await assignRole(i.guild, u.id, ROLE_PREMIUM, 0xe8b4b8);
+    if (ok) return sayE(i, [okEmbed(`<@${u.id}> has been given the **${ROLE_PREMIUM}** role.`)]);
+    return sayE(i, [errEmbed("Couldn't assign the Premium role. Check bot permissions.")]);
+  }
+
+  // Admin: give Plus role
+  if (cmd === 'adminplus') {
+    if (!isAdmin(i)) return say(i, 'Only an admin can use this command.');
+    const u = i.options.getUser('user');
+    const ok = await assignRole(i.guild, u.id, ROLE_PLUS, 0x9b59b6);
+    if (ok) return sayE(i, [okEmbed(`<@${u.id}> has been given the **${ROLE_PLUS}** role.`)]);
+    return sayE(i, [errEmbed("Couldn't assign the Plus role. Check bot permissions.")]);
+  }
+
   if (cmd === 'addtime') {
     if (!isManager(i)) return say(i, 'Only a server administrator or manager can use this.');
     const k = db.prepare('select * from lkeys where k=?').get(C.normKey(i.options.getString('key')));
@@ -316,7 +398,41 @@ async function onCommand(i) {
     return say(i, `Time added. New expiry: ${fmtDate(base + i.options.getInteger('days') * C.DAY)}.`);
   }
 
-  // Commands below need a script that belongs to the user (or any script for admins).
+  // /wl (whitelist with public announcement)
+  if (cmd === 'wl') {
+    if (!isAdmin(i) && !isManager(i)) return say(i, 'Only an admin or manager can use this command.');
+    const u = i.options.getUser('user');
+    const s = ownScript(i, i.options.getString('script'));
+    if (!s) return say(i, "I couldn't find that script in your account.");
+    const durStr = i.options.getString('temp');
+    const dur = durStr ? C.parseDuration(durStr) : null;
+    if (dur === undefined) return sayE(i, [errEmbed('Invalid duration. Use e.g. 7d, 1m, 1y or perma.')]);
+    const key = grantToUser(s.id, u.id, dur);
+    // Give buyer role if set
+    let roleNote = '';
+    if (s.buyer_role_id) {
+      try { const m = await i.guild.members.fetch(u.id); await m.roles.add(s.buyer_role_id); }
+      catch (e) { console.error('[wl role]', e.message); roleNote = "\nI couldn't give the buyer role. Check my role permissions."; }
+    }
+    // Public announcement
+    try {
+      const ch = i.channel;
+      // Find a channel named "whitelist" or "script" for the announcement, fallback to current
+      let announceChannel = ch;
+      const wlCh = i.guild.channels.cache.find((c) => c.isTextBased && c.isTextBased() && /whitelist|script|access/i.test(c.name));
+      if (wlCh) announceChannel = wlCh;
+
+      const embed = new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle('✅ Whitelisted!')
+        .setDescription(`<@${u.id}> You have been whitelisted!\nYou can access the script via this message → <#${announceChannel.id}>`)
+        .setTimestamp();
+      await ch.send({ embeds: [embed] });
+    } catch (e) { console.error('[wl announce]', e.message); }
+    return sayE(i, [okEmbed(`**${u.username}** is now whitelisted on **${s.name || s.slug}**.\nKey: \`${key.k}\`\nExpires: ${key.expires_at ? fmtDate(key.expires_at) : 'Lifetime'}${roleNote}`)]);
+  }
+
+  // Commands below need a script that belongs to the user (or any script for admins)
   const s = ownScript(i, i.options.getString('script'));
   if (!s) return say(i, "I couldn't find that script in your account.");
 
@@ -466,7 +582,6 @@ client.once('ready', async () => {
   try {
     const body = defs.map((d) => d.toJSON());
     if (GUILD_ID) {
-      // Guild commands show up instantly. Global ones can take up to an hour.
       const guild = await client.guilds.fetch(GUILD_ID);
       await guild.commands.set(body);
       await client.application.commands.set([]);
@@ -474,6 +589,14 @@ client.once('ready', async () => {
     } else {
       await client.application.commands.set(body);
       console.log('[bot] commands registered globally');
+    }
+    // Ensure roles exist in the guild on startup
+    if (GUILD_ID) {
+      const guild = await client.guilds.fetch(GUILD_ID);
+      for (const roleName of [ROLE_ADMIN, ROLE_PREMIUM, ROLE_PLUS]) {
+        await findOrCreateRole(guild, roleName);
+      }
+      console.log('[bot] ensured roles:', ROLE_ADMIN, ROLE_PREMIUM, ROLE_PLUS);
     }
   } catch (e) { console.error('[bot] commands:', e.message); }
 });
