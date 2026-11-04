@@ -229,7 +229,7 @@ function payload(hid, key, hwid, n, ua) {
   if (expired(k)) return deny('Your key has expired.');
   if (!hwid) return deny('Could not read your HWID.');
   if (!k.hwid) db.prepare('update lkeys set hwid=? where id=?').run(hwid, k.id);
-  else if (k.hwid !== hwid) return deny('HWID mismatch. Reset your HWID from the Discord panel.');
+  else if (k.hwid !== hwid) return deny('Key is linked to a different HWID.');
   db.prepare('update lkeys set uses=uses+1, last=? where id=?').run(now(), k.id);
   db.prepare('update scripts set runs=runs+1 where id=?').run(s.id);
   db.prepare('insert into execs(script_id,ts) values(?,?)').run(s.id, now());
