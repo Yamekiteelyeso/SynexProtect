@@ -5,10 +5,13 @@ const file = process.env.DB_PATH || (fs.existsSync('/data') ? '/data/synex.db' :
 fs.mkdirSync(path.dirname(file), { recursive: true });
 const db = new DatabaseSync(file);
 db.exec('PRAGMA journal_mode = WAL;');
+const USERS = `create table users(id integer primary key, discord_id text unique, username text not null, email text unique, pass text, plan text default 'free', admin integer default 0, created integer)`;
+const ucols = db.prepare('pragma table_info(users)').all();
+if (ucols.length && !ucols.some((c) => c.name === 'email')) {
+  db.exec(`alter table users rename to users_old; ${USERS}; insert into users(id,discord_id,username,plan,admin,created) select id,discord_id,username,plan,admin,created from users_old; drop table users_old;`);
+}
 db.exec(`
-create table if not exists users(
-  id integer primary key, discord_id text unique not null, username text,
-  plan text default 'free', admin integer default 0, created integer);
+create table if not exists users(id integer primary key, discord_id text unique, username text not null, email text unique, pass text, plan text default 'free', admin integer default 0, created integer);
 create table if not exists scripts(
   id integer primary key, user_id integer not null, slug text unique not null, name text,
   content text not null, enabled integer default 1, free integer default 0,
