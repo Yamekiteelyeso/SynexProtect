@@ -5,6 +5,8 @@ const PLAN_MAX = 4;
 const BOT_UA = /curl|wget|python|httpie|postman|insomnia|node-fetch|axios|java|go-http|discordbot|okhttp|powershell/i;
 
 const newKey = () => crypto.randomBytes(16).toString('hex');
+const newHid = () => crypto.randomBytes(14).toString('hex');
+const scriptByHid = (hid) => db.prepare('select * from scripts where hid=?').get(String(hid || ''));
 const slugify = (s) => String(s || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '').slice(0, 24);
 const maxScripts = (u) => (u.admin || u.plan === 'pro' ? Infinity : PLAN_MAX);
 const scriptBySlug = (slug) => db.prepare('select * from scripts where slug=?').get(String(slug || '').toLowerCase());
@@ -64,8 +66,8 @@ function runStats(scriptId) {
 }
 function payload(slug, key, hwid, n, ua) {
   const fail = (m) => cipher(Buffer.from('SYX0' + m, 'utf8'), seedOf(key, n));
-  const s = scriptBySlug(slug);
-  if (!s || !s.enabled) return fail('Script no disponible');
+  const s = scriptByHid(slug);
+  if (!s || !s.enabled) return fail('Script not available');
   if (BOT_UA.test(ua || '')) return fail('Acceso bloqueado');
   if (!s.free) {
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) return fail('Key inválida o faltante. Usá script_key="TU_KEY";');
@@ -123,18 +125,17 @@ warn(err)
 }
 
 function landingHtml(slug, base) {
-  const ls = `script_key="TU_KEY";\nloadstring(game:HttpGet("${base}/files/v1/loaders/${slug}.lua"))()`;
+  const ls = `-- your loader, ready to paste\nscript_key="YOUR_KEY";\nloadstring(game:HttpGet("${base}/files/v1/loaders/${slug}.lua"))()`;
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SynexHub · ${esc(slug)}</title><style>
+<title>SynexHub</title><style>
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0912;color:#f1ecfa;font-family:system-ui,sans-serif;padding:20px}
 .box{width:min(560px,100%);background:#150f20;border:1px solid #2e2347;border-radius:16px;padding:26px}
 h1{margin:0 0 4px;color:#f5a524;font-size:28px}small{color:#a89bc2}
 pre{background:#0b0912;border-radius:10px;padding:14px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;color:#8ee0a0;font-size:13px}
 button{background:#f5a524;color:#111;border:0;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;width:100%}
-</style></head><body><div class="box"><h1>SynexHub</h1><small>Script: <b>${esc(slug)}</b></small>
-<p>Copiá el loadstring y pegalo en tu executor (Delta u otro).</p>
+</style></head><body><div class="box"><h1>SynexHub</h1><p>Copy the loader and paste it into your executor (Delta or another).</p>
 <pre id="ls">${esc(ls)}</pre><button onclick="navigator.clipboard.writeText(document.getElementById('ls').innerText).then(()=>this.textContent='¡Copiado!')">Copiar loadstring</button>
 </div></body></html>`;
 }
-module.exports = { parseDuration, runStats, landingHtml,  DAY, PLAN_MAX, newKey, slugify, maxScripts, scriptBySlug, scriptForOwner, expired, loadstring, createKeys, resetHwid, seedOf, cipher, payload, loaderLua };
+module.exports = { newHid, scriptByHid, parseDuration, runStats, landingHtml,  DAY, PLAN_MAX, newKey, slugify, maxScripts, scriptBySlug, scriptForOwner, expired, loadstring, createKeys, resetHwid, seedOf, cipher, payload, loaderLua };
