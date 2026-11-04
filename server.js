@@ -284,7 +284,7 @@ app.get('/files/v1/payload/:slug', (req, res) => {
   const q = req.query;
   const key = String(q.k || ''), hwid = String(q.h || ''), n = String(q.n || '');
   if (!/^\d{1,10}$/.test(n) || !/^[A-Za-z0-9_.-]{1,80}$/.test(hwid) && hwid !== '') return res.status(400).end();
-  const buf = C.payload(String(req.params.slug).toLowerCase(), key, hwid, n, req.headers['user-agent']);
+  const buf = C.payload(String(req.params.slug).toLowerCase(), key, hwid, n, req.headers['user-agent'], q.t);
   res.type('application/octet-stream').set('Cache-Control', 'no-store').send(buf);
 });
 
