@@ -252,9 +252,10 @@ function openSettings(id) {
   openDlg(`<h3>Settings</h3><small>Changes apply right away.</small>
     <label>Days before HWID can be reset (1-365)</label><input id="hd" type="number" min="1" max="365" value="${s ? s.hwid_days : 7}">
     <label>Buyer role ID</label><input id="br" placeholder="Right-click the role > Copy ID" value="${s && s.buyer_role_id ? esc(s.buyer_role_id) : ''}">
+    <label style="display:flex;gap:8px;align-items:center;color:var(--tx)"><input type="checkbox" id="xd" style="width:auto;margin:0" ${s && s.expiry_dm ? 'checked' : ''}> DM buyers when their key expires</label>
     <div class="da"><button class="btn sm" onclick="close()">Close</button><button class="btn sm pri" id="sv">Save</button></div>`);
   $('#sv').onclick = async () => {
-    try { await api(`/api/scripts/${id}`, { m: 'PATCH', b: { hwid_days: $('#hd').value, buyer_role_id: $('#br').value.trim() } }); close(); toast('Saved'); await refresh(); }
+    try { await api(`/api/scripts/${id}`, { m: 'PATCH', b: { hwid_days: $('#hd').value, buyer_role_id: $('#br').value.trim(), expiry_dm: $('#xd').checked } }); close(); toast('Saved'); await refresh(); }
     catch (e) { toast(e.message); }
   };
 }
