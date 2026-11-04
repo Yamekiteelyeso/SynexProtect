@@ -27,7 +27,7 @@ function resetHwid(k, script, force = false) {
   const period = (script.hwid_days || 7) * DAY;
   if (!force && k.hwid_reset_at && Date.now() - k.hwid_reset_at < period) {
     const left = Math.ceil((period - (Date.now() - k.hwid_reset_at)) / 36e5);
-    return { error: `Podés reiniciar el HWID en ${left} h` };
+    return { error: `You can reset the HWID in ${left} h` };
   }
   db.prepare('update lkeys set hwid=null, hwid_reset_at=? where id=?').run(Date.now(), k.id);
   return { ok: true };
