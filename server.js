@@ -67,7 +67,7 @@ function auth(req, res, next) {
     const p = jwt.verify(req.cookies.sx || '', SECRET);
     const u = db.prepare('select * from users where id=?').get(p.id);
     if (!u) throw new Error('no user');
-    if (u.plan_expires && u.plan_expires < Date.now()) { db.prepare('update users set plan=?, plan_expires=null where id=?').run('free', u.id); u.plan = 'free'; u.plan_expires = null; }
+    if (u.plan_expires && u.plan_expires < Date.now()) { const old = u.plan; db.prepare('update users set plan=?, plan_expires=null where id=?').run('free', u.id); u.plan = 'free'; u.plan_expires = null; }
     if (u.banned) throw Object.assign(new Error('banned'), { banned: true });
     req.user = u;
     next();
@@ -213,6 +213,13 @@ app.delete('/api/keys/:kid', auth, (req, res) => {
   res.json({ ok: 1 });
 });
 
+// Expiración: revisa cada 5 min los planes vencidos y los pasa a Free (solo en la web).
+function sweepPlans() {
+  db.prepare("update users set plan='free', plan_expires=null where plan_expires is not null and plan_expires < ? and plan <> 'free'").run(Date.now());
+}
+sweepPlans();
+setInterval(sweepPlans, 5 * 60e3);
+
 // ---------- Canjear llave de plan ----------
 app.post('/api/plan/redeem', auth, (req, res) => {
   if (req.user.blacklisted) return res.status(403).json({ error: 'Tu cuenta está en blacklist' });
@@ -222,6 +229,7 @@ app.post('/api/plan/redeem', auth, (req, res) => {
   if (!k) return res.status(404).json({ error: 'Llave inválida o ya usada' });
   db.prepare('update plan_keys set used_by=?, used_at=? where id=?').run(req.user.id, Date.now(), k.id);
   const exp = k.dur ? Date.now() + k.dur : null;
+  const oldPlan = req.user.plan;
   db.prepare('update users set plan=?, plan_expires=? where id=?').run(k.plan, exp, req.user.id);
   res.json({ ok: 1, plan: k.plan });
 });
@@ -252,6 +260,13 @@ app.post('/api/admin/plankeys', auth, adminOnly, (req, res) => {
   res.json({ keys });
 });
 app.delete('/api/admin/plankeys/:id', auth, adminOnly, (req, res) => {
+  const k = db.prepare('select * from plan_keys where id=?').get(Number(req.params.id));
+  if (k && k.used_by) {
+    const u = db.prepare('select * from users where id=?').get(k.used_by);
+    if (u && u.plan !== 'free') {
+      db.prepare("update users set plan='free', plan_expires=null where id=?").run(u.id);
+      }
+  }
   db.prepare('delete from plan_keys where id=?').run(Number(req.params.id));
   res.json({ ok: 1 });
 });
@@ -261,14 +276,16 @@ app.post('/api/admin/grant', auth, adminOnly, (req, res) => {
   if (!/^\d{5,25}$/.test(id)) return res.status(400).json({ error: 'Discord ID inválido' });
   if (!['free', 'premium', 'plus'].includes(plan)) return res.status(400).json({ error: 'Plan inválido' });
   const u = db.prepare('select id from users where discord_id=?').get(id);
-  if (u) db.prepare('update users set plan=?, plan_expires=null where id=?').run(plan, u.id);
+  if (u) { const old = db.prepare('select plan from users where id=?').get(u.id).plan; db.prepare('update users set plan=?, plan_expires=null where id=?').run(plan, u.id); }
   else db.prepare('insert into users(discord_id,username,plan,created) values(?,?,?,?)').run(id, 'user' + id.slice(-6), plan, Date.now());
   res.json({ ok: 1 });
 });
 app.post('/api/admin/users/:id/plan', auth, adminOnly, (req, res) => {
   const plan = (req.body || {}).plan;
   if (!['free', 'premium', 'plus'].includes(plan)) return res.status(400).json({ error: 'Plan inválido' });
-  db.prepare('update users set plan=?, plan_expires=null where id=?').run(plan, Number(req.params.id));
+  const t = db.prepare('select * from users where id=?').get(Number(req.params.id));
+  if (!t) return res.status(404).json({ error: 'No existe' });
+  db.prepare('update users set plan=?, plan_expires=null where id=?').run(plan, t.id);
   res.json({ ok: 1 });
 });
 app.get('/api/admin/users', auth, adminOnly, (req, res) => {
