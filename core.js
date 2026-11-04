@@ -3,12 +3,13 @@ const crypto = require('crypto');
 const db = require('./db');
 
 const DAY = 864e5;
-const PLAN_MAX = 4; // free plan: up to 4 scripts
+const PLAN_MAX = 2; // free plan: up to 2 scripts
+const PREMIUM_MAX = 10;
 const now = () => Date.now();
 const esc = (x) => String(x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ---------- Plan ----------
-const maxScripts = (user) => (user && (user.admin || user.plan === 'pro') ? Infinity : PLAN_MAX);
+const maxScripts = (user) => (user && user.admin ? Infinity : user && user.plan === 'pro' ? PREMIUM_MAX : PLAN_MAX);
 
 // ---------- Scripts ----------
 const slugify = (name) => String(name || '')
@@ -279,7 +280,7 @@ function resetHwid(k, s, force = false) {
 }
 
 module.exports = {
-  DAY, PLAN_MAX, maxScripts,
+  DAY, PLAN_MAX, PREMIUM_MAX, maxScripts,
   slugify, newHid, scriptBySlug, scriptByHid, scriptForOwner,
   runStats, loadstring, loaderLua, landingHtml, payload,
   createKeys, parseDuration, expired, resetHwid, normKey,
