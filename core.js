@@ -99,7 +99,11 @@ const UNITS = { s: 1e3, m: 6e4, h: 36e5, d: DAY, w: 7 * DAY, y: 365 * DAY };
 // Devuelve ms; 0 = perma; undefined = formato inválido.
 function parseDuration(v) {
   const s = String(v || '').trim().toLowerCase();
-  if (s === 'perma' || s === 'lifetime') return 0;
+  // Vacío = no se pasó "duration" en el comando. El slash command documenta
+  // "default: perma" cuando se omite, pero antes caía en el regex de abajo,
+  // no matcheaba nada y devolvía undefined -> "Invalid duration" siempre
+  // que no se especificaba duración.
+  if (s === '' || s === 'perma' || s === 'lifetime') return 0;
   const m = /^(\d+)([smhdwy])$/.exec(s);
   if (!m) return undefined;
   return Number(m[1]) * UNITS[m[2]];
