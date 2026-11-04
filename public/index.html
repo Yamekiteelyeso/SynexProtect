@@ -150,7 +150,7 @@ async function api(p, o = {}) {
 function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (el.hidden = true), 2200); }
 async function copy(t, msg = 'Copied') { try { await navigator.clipboard.writeText(t); toast(msg); } catch { toast('Could not copy'); } }
 function openDlg(html) { const d = $('#dlg'); d.innerHTML = html; setLogos(); if (!d.open) d.showModal(); return d; }
-const close = () => $('#dlg').close();
+const closeDlg = () => $('#dlg').close();
 
 const ERR = { noacct: 'No account is linked to this Discord yet. Create one first.', linked: 'That Discord account is already linked to another user.', state: 'Login session expired, please try again.', token: 'Discord did not return access.', perfil: 'Could not read your Discord profile.', oauth: 'Could not connect to Discord.' };
 function show(which) {
@@ -215,7 +215,7 @@ function openNew() {
     <label>Lua code</label><textarea id="ct" placeholder="-- paste your script"></textarea>
     <label>Or upload a file (.lua or .txt)</label><input type="file" id="fu" accept=".lua,.txt,text/plain">
     <label style="display:flex;gap:8px;align-items:center;color:var(--tx)"><input type="checkbox" id="fr" style="width:auto;margin:0"> Free (no key required)</label>
-    <div class="da"><button class="btn sm" onclick="close()">Cancel</button><button class="btn sm pri" id="go">Create</button></div>`);
+    <div class="da"><button class="btn sm" onclick="closeDlg()">Cancel</button><button class="btn sm pri" id="go">Create</button></div>`);
   $('#fu').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
     const r = new FileReader();
@@ -226,7 +226,7 @@ function openNew() {
     r.readAsText(f);
   };
   $('#go').onclick = async () => {
-    try { await api('/api/scripts', { m: 'POST', b: { name: $('#nm').value, content: $('#ct').value, free: $('#fr').checked } }); close(); toast('Script created'); await refresh(); }
+    try { await api('/api/scripts', { m: 'POST', b: { name: $('#nm').value, content: $('#ct').value, free: $('#fr').checked } }); closeDlg(); toast('Script created'); await refresh(); }
     catch (e) { toast(e.message); }
   };
 }
@@ -257,9 +257,9 @@ function openSettings(id) {
   openDlg(`<h3>Settings</h3><small>Changes apply right away.</small>
     <label>Days before HWID can be reset (1-365)</label><input id="hd" type="number" min="1" max="365" value="${s ? s.hwid_days : 7}">
     <label>Buyer role ID</label><input id="br" placeholder="Right-click the role > Copy ID" value="${s && s.buyer_role_id ? esc(s.buyer_role_id) : ''}">
-    <div class="da"><button class="btn sm" onclick="close()">Close</button><button class="btn sm pri" id="sv">Save</button></div>`);
+    <div class="da"><button class="btn sm" onclick="closeDlg()">Close</button><button class="btn sm pri" id="sv">Save</button></div>`);
   $('#sv').onclick = async () => {
-    try { await api(`/api/scripts/${id}`, { m: 'PATCH', b: { hwid_days: $('#hd').value, buyer_role_id: $('#br').value.trim() } }); close(); toast('Saved'); await refresh(); }
+    try { await api(`/api/scripts/${id}`, { m: 'PATCH', b: { hwid_days: $('#hd').value, buyer_role_id: $('#br').value.trim() } }); closeDlg(); toast('Saved'); await refresh(); }
     catch (e) { toast(e.message); }
   };
 }
