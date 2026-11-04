@@ -44,13 +44,13 @@ async function redeemKey(member, uid, raw) {
   if (k.blacklisted || C.expired(k)) return 'Key expired or disabled.';
   if (blocked(s, uid, member)) return 'Your account is blocked on this script.';
   db.prepare('update lkeys set owner_discord_id=? where id=?').run(uid, k.id);
-  if (s.buyer_role_id && member && member.roles && member.roles.add) {
-    try { await member.roles.add(s.buyer_role_id); } catch (e) { console.error('[role]', e.message); }
-  }
-  return `Key redeemed on **${s.slug}**. You can now use the panel buttons.`;
+  if (!s.buyer_role_id) return `Key redeemed on **${s.slug}**, but no buyer role is set yet. Ask the owner to set it.`;
+  try { await member.roles.add(s.buyer_role_id); }
+  catch (e) { console.error('[role]', e.message); return `Key redeemed on **${s.slug}**, but I couldn't give you the buyer role. Ask an admin to check my role permissions.`; }
+  return `Key redeemed on **${s.slug}**. You now have the buyer role.`;
 }
 
-const scriptOpt = (o) => o.setName('script').setDescription('Script slug').setRequired(true);
+const scriptOpt = (o) => o.setName('script').setDescription('Your script').setRequired(true).setAutocomplete(true);
 const defs = [
   new SlashCommandBuilder().setName('generatekey').setDescription('Generate keys for a script (admin)')
     .addStringOption(scriptOpt)
@@ -96,9 +96,9 @@ async function deletePanel(p) {
 function onAutocomplete(i) {
   const q = i.options.getFocused().toLowerCase();
   const rows = isAdmin(i)
-    ? db.prepare('select slug from scripts order by id desc limit 200').all()
-    : db.prepare('select s.slug from scripts s join users u on u.id=s.user_id where u.discord_id=? order by s.id desc').all(i.user.id);
-  return i.respond(rows.filter((r) => r.slug.includes(q)).slice(0, 25).map((r) => ({ name: r.slug, value: r.slug })));
+    ? db.prepare('select slug, name from scripts order by id desc limit 200').all()
+    : db.prepare('select s.slug, s.name from scripts s join users u on u.id=s.user_id where u.discord_id=? order by s.id desc').all(i.user.id);
+  return i.respond(rows.filter((r) => (r.name || r.slug).toLowerCase().includes(q) || r.slug.includes(q)).slice(0, 25).map((r) => ({ name: r.name || r.slug, value: r.slug })));
 }
 
 async function onCommand(i) {
@@ -172,9 +172,8 @@ async function onCommand(i) {
     if (!channel || !channel.isTextBased || !channel.isTextBased()) return say(i, 'Pick a text channel.');
     const desc = i.options.getString('descripcion') || 'Use the buttons below to redeem your key, get the script or get your role.';
     const embed = new EmbedBuilder().setColor(0x5865f2)
-      .setAuthor({ name: 'Synex' })
-      .setTitle(`${s.slug} Control Panel`)
-      .setDescription(`This control panel is for the project: **${s.slug}**\n${desc}\nIf you're a buyer, click on the buttons below to redeem your key, get the script or get your role.`)
+      .setTitle(`${s.name || s.slug} Control Panel`)
+      .setDescription(`This control panel is for the project: ${s.name || s.slug}\nIf you're a buyer, click on the buttons below to redeem your key, get the script or get your role.${i.options.getString('descripcion') ? '\n\n' + i.options.getString('descripcion') : ''}`)
       .setFooter({ text: `Sent by ${i.user.username}`, iconURL: i.user.displayAvatarURL() })
       .setTimestamp();
     const btn = (act, label, emoji, style) => new ButtonBuilder().setCustomId(`sx|${act}|${s.slug}`).setLabel(label).setEmoji(emoji).setStyle(style);
@@ -204,10 +203,17 @@ async function onButton(i) {
     return i.showModal(modal);
   }
   if (!s.enabled) return say(i, 'Script paused.');
+  if (act === 'getrole') {
+    const k0 = ownedKey(s.id, i.user.id);
+    if (!k0 || C.expired(k0)) return sayE(i, [denyEmbed()]);
+    if (!s.buyer_role_id) return say(i, 'No buyer role is set for this script yet.');
+    try { await i.member.roles.add(s.buyer_role_id); } catch (e) { console.error('[role]', e.message); return say(i, "I couldn't give you the role. Ask an admin to check my role permissions."); }
+    return say(i, 'Role granted.');
+  }
   if (!s.buyer_role_id || !isBuyer(i.member, s)) return sayE(i, [denyEmbed()]);
   if (blocked(s, i.user.id, i.member)) return say(i, 'Your account is blocked on this script.');
   const k = ownedKey(s.id, i.user.id);
-  if (act === 'getscript') return k && !C.expired(k) ? say(i, '```lua\n' + C.loadstring(s.slug, BASE, k.k) + '\n```') : say(i, "You don't have a valid key on this script. Use Redeem Key.");
+  if (act === 'getscript') return k && !C.expired(k) ? say(i, '```lua\n' + C.loadstring(s.hid, BASE, k.k) + '\n```') : say(i, "You don't have a valid key on this script. Use Redeem Key.");
   if (!k) return say(i, "You don't have a redeemed key on this script.");
   if (act === 'getrole') {
     try { await i.member.roles.add(s.buyer_role_id); } catch (e) { console.error('[role]', e.message); }
