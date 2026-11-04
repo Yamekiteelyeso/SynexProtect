@@ -109,23 +109,65 @@ function onAutocomplete(i) {
   return i.respond(rows.filter((r) => (r.name || r.slug).toLowerCase().includes(q) || r.slug.includes(q)).slice(0, 25).map((r) => ({ name: r.name || r.slug, value: r.slug })));
 }
 
+// Busca una key vigente (no vencida, no blacklist) del usuario en ese script.
+const hasValidKey = (scriptId, uid) => !!db.prepare('select 1 from lkeys where script_id=? and owner_discord_id=? and blacklisted=0 and (expires_at is null or expires_at>=?) limit 1').get(scriptId, uid, Date.now());
+
+// Quita el buyer role al usuario. Devuelve 'done' (listo), 'permanent' (no tiene sentido reintentar) o 'retry' (error temporal).
+async function revokeBuyerRole(roleId, uid) {
+  const guild = client.guilds.cache.find((g) => g.roles.cache.has(roleId));
+  if (!guild) { console.error('[expiry-role] el bot no ve el rol', roleId, 'en ningun servidor'); return 'retry'; }
+  let member;
+  try { member = await guild.members.fetch(uid); }
+  catch (e) {
+    if (e.code === 10007) return 'permanent'; // ya no está en el servidor
+    console.error('[expiry-role] no pude buscar al miembro', uid, e.message);
+    return 'retry';
+  }
+  if (!member.roles.cache.has(roleId)) return 'done';
+  try { await member.roles.remove(roleId); console.log('[expiry-role] rol quitado a', uid, '(key vencida)'); return 'done'; }
+  catch (e) {
+    console.error('[expiry-role] no pude quitar el rol a', uid, '- revisá que el rol del bot esté arriba del buyer role:', e.message);
+    return 'retry';
+  }
+}
+
+// Corre cada minuto. Hace dos cosas por cada key vencida de un comprador:
+//  1) DM de aviso (solo si el script tiene "DM al vencer" activado).
+//  2) Quitar el buyer role (siempre, si el script tiene buyer role), salvo que tenga otra key vigente.
 async function checkExpiries() {
-  const rows = db.prepare('select k.id, k.owner_discord_id from lkeys k join scripts s on s.id=k.script_id where s.expiry_dm=1 and k.notified=0 and k.owner_discord_id is not null and k.expires_at is not null and k.expires_at < ?').all(Date.now());
+  const rows = db.prepare(`select k.id, k.script_id, k.owner_discord_id, k.notified, k.role_revoked, s.expiry_dm, s.buyer_role_id
+    from lkeys k join scripts s on s.id=k.script_id
+    where k.owner_discord_id is not null and k.expires_at is not null and k.expires_at < ?
+      and ((s.expiry_dm=1 and k.notified=0) or (s.buyer_role_id is not null and k.role_revoked=0))`).all(Date.now());
+
   for (const r of rows) {
-    try {
-      const u = await client.users.fetch(r.owner_discord_id);
-      const e = new EmbedBuilder().setColor(0xed4245).setTitle('Key expired').setDescription('your key expired\nbuy another key or ignore this message');
-      await u.send({ embeds: [e] });
-      // Solo marcamos como notificado si el DM realmente salió. Antes se marcaba
-      // antes de intentar el envío, así que un fallo puntual (DMs cerrados, fetch
-      // fallido, etc.) dejaba esa key sin notificar para siempre.
-      db.prepare('update lkeys set notified=1 where id=?').run(r.id);
-    } catch (err) {
-      console.error('[expiry-dm]', err.message);
-      // 50007 = el usuario tiene los DMs cerrados / no acepta DMs del bot.
-      // 10013 = usuario inexistente (cuenta borrada). Son errores permanentes:
-      // reintentar por siempre no sirve, así que ahí sí lo marcamos notificado.
-      if (err.code === 50007 || err.code === 10013) db.prepare('update lkeys set notified=1 where id=?').run(r.id);
+    if (r.expiry_dm && !r.notified) {
+      try {
+        const u = await client.users.fetch(r.owner_discord_id);
+        const e = new EmbedBuilder().setColor(0xed4245).setTitle('Key expired').setDescription('your key expired\nbuy another key or ignore this message');
+        await u.send({ embeds: [e] });
+        console.log('[expiry-dm] DM enviado a', r.owner_discord_id);
+        db.prepare('update lkeys set notified=1 where id=?').run(r.id);
+      } catch (err) {
+        // 50007 = DMs cerrados / el usuario no acepta DMs del bot. 10013 = cuenta inexistente.
+        // Son errores permanentes, así que no se reintenta para siempre.
+        const motivo = err.code === 50007 ? 'DMs cerrados (el usuario no acepta DMs de miembros del servidor)'
+          : err.code === 10013 ? 'usuario inexistente' : err.message;
+        console.error('[expiry-dm] no se pudo enviar a', r.owner_discord_id, '-', motivo, '| code:', err.code);
+        if (err.code === 50007 || err.code === 10013) db.prepare('update lkeys set notified=1 where id=?').run(r.id);
+      }
+    }
+
+    if (r.buyer_role_id && !r.role_revoked) {
+      if (hasValidKey(r.script_id, r.owner_discord_id)) {
+        // Tiene otra key vigente: conserva el rol. Solo marcamos esta key como revisada.
+        db.prepare('update lkeys set role_revoked=1 where id=?').run(r.id);
+      } else {
+        const res = await revokeBuyerRole(r.buyer_role_id, r.owner_discord_id);
+        if (res !== 'retry') {
+          db.prepare('update lkeys set role_revoked=1 where script_id=? and owner_discord_id=?').run(r.script_id, r.owner_discord_id);
+        }
+      }
     }
   }
 }
@@ -156,7 +198,7 @@ async function onCommand(i) {
     if (!k) return say(i, 'Key not found.');
     if (k.expires_at == null) return say(i, 'That key is lifetime already, no need to add time.');
     const base = Math.max(Date.now(), k.expires_at);
-    db.prepare('update lkeys set expires_at=?, notified=0 where id=?').run(base + i.options.getInteger('days') * C.DAY, k.id);
+    db.prepare('update lkeys set expires_at=?, notified=0, role_revoked=0 where id=?').run(base + i.options.getInteger('days') * C.DAY, k.id);
     return say(i, 'Time added.');
   }
 
@@ -269,7 +311,8 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 
 client.once('ready', async () => {
   console.log('[bot] conectado como', client.user.tag);
-  setInterval(() => checkExpiries().catch((e) => console.error('[expiry]', e.message)), 5 * 60e3);
+  setTimeout(() => checkExpiries().catch((e) => console.error('[expiry]', e.message)), 30e3);
+  setInterval(() => checkExpiries().catch((e) => console.error('[expiry]', e.message)), 60e3);
   try {
     const body = defs.map((d) => d.toJSON());
     await client.application.commands.set(body);
