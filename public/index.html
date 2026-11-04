@@ -55,6 +55,21 @@ main{max-width:1080px;margin:0 auto;padding:26px 22px 60px}
 .keyrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:8px;font-size:13px}.keyrow code{background:#0a0a0a;padding:4px 8px;border-radius:7px;color:#ddd;word-break:break-all}
 .bars{display:flex;align-items:flex-end;gap:4px;height:90px}.bars div{flex:1;background:#ddd;border-radius:4px 4px 0 0;min-height:2px;opacity:.85}
 .empty{border:1px dashed var(--line);border-radius:16px;padding:40px;text-align:center;color:var(--mu)}
+
+.admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:16px}
+.admin-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.admin-card h4{margin:0;font-size:15px;color:var(--mu);text-transform:uppercase;letter-spacing:.5px;font-size:11px}
+.admin-card b{font-size:17px}
+.key-out{background:#000;border:1px solid var(--line);border-radius:8px;padding:10px;font:13px/1.5 ui-monospace,monospace;color:#9be3b1;word-break:break-all}
+.sep{height:1px;background:var(--line);margin:8px 0}
+.plan-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.plan-box{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:12px}
+.plan-box.current{border-color:#57f287}
+.plan-box b{font-size:19px}.plan-box .pr{font-size:32px;font-weight:800}
+.plan-box ul{margin:0;padding-left:18px;color:var(--mu);font-size:14px;line-height:1.75}
+.plan-box .plan-btn{margin-top:auto}
+.redeem-wrap{margin-top:20px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:10px;max-width:480px}
+.redeem-wrap h4{margin:0;font-size:15px}
 dialog{background:var(--panel);color:var(--tx);border:1px solid var(--line);border-radius:18px;padding:24px;width:min(560px,94vw)}dialog::backdrop{background:rgba(0,0,0,.7)}
 dialog h3{margin:0 0 6px}.da{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#fff;color:#000;padding:10px 16px;border-radius:12px;font-weight:600;z-index:99}
@@ -137,6 +152,7 @@ loadstring(game:HttpGet("https://synexprotect.up.railway.app/files/v1/loaders/9f
     <button data-v="stats" onclick="go('stats')">Estadísticas</button>
     <button data-v="plans" onclick="go('plans')">Planes</button>
     <button data-v="profile" onclick="go('profile')">Perfil</button>
+    <button data-v="admin" id="admin-btn" onclick="go('admin')" hidden>Admin</button>
     <button onclick="logout()">Log out</button>
   </nav>
   <main>
@@ -149,15 +165,9 @@ loadstring(game:HttpGet("https://synexprotect.up.railway.app/files/v1/loaders/9f
     <div class="stats" id="stats"></div>
     <div class="grid" id="list"></div>
     <div id="v-stats" hidden></div>
-    <div id="v-plans" hidden>
-      <div class="head"><div><h2>Planes</h2><small>Elige el plan que necesitas</small></div></div>
-      <div class="plans">
-        <div class="plan"><b>Free</b><div class="pr">0$</div><ul><li>2 scripts</li><li>50 keys por script</li></ul></div>
-        <div class="plan"><b>Premium</b><div class="pr">3$</div><ul><li>10 scripts</li><li>Keys ilimitadas</li></ul></div>
-        <div class="plan"><b>Plus</b><div class="pr">5$</div><ul><li>Todo ilimitado</li></ul></div>
-      </div>
-    </div>
+    <div id="v-plans" hidden></div>
     <div id="v-profile" hidden></div>
+    <div id="v-admin" hidden></div>
   </main>
 </section>
 
@@ -201,6 +211,7 @@ async function boot() {
     $('#plan').textContent = me.max == null ? 'Unlimited' : `${me.plan} plan · up to ${me.max} scripts`;
     if (!me.discord) $('#banner').innerHTML = '<div class="panel" style="margin-bottom:18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span>Connect Discord so the bot and panels can use your scripts.</span><span style="flex:1"></span><a class="btn sm pri" href="/auth/discord?link=1">Connect Discord</a></div>';
     await refresh();
+    if (IS_ADMIN()) { const ab = $('#admin-btn'); if(ab) ab.hidden = false; }
   } catch {
     $('#auth').hidden = false; if (!e) show('login');
   }
@@ -309,8 +320,11 @@ function go(v) {
   $('#v-stats').hidden = v !== 'stats';
   $('#v-plans').hidden = v !== 'plans';
   $('#v-profile').hidden = v !== 'profile';
+  $('#v-admin').hidden = v !== 'admin';
   if (v === 'stats') renderStats();
   if (v === 'profile') renderProfile();
+  if (v === 'plans') renderPlans();
+  if (v === 'admin') renderAdmin();
 }
 function renderStats() {
   const s = window.__list || [];
@@ -324,14 +338,156 @@ function renderStats() {
 }
 function renderProfile() {
   const me = window.__me || {};
-  $('#v-profile').innerHTML = `<div class="card" style="max-width:520px">
-    <h3>Tu perfil</h3>
-    <small>Usuario</small><div>${esc(me.username)}</div>
-    <small>Correo</small><div>${esc(me.email || 'Sin correo (login con Discord)')}</div>
-    <small>Discord</small><div>${me.discord ? 'Conectado' : 'No conectado'}</div>
-    <small>Plan</small><div>${esc(me.plan)}${me.max == null ? ' · ilimitado' : ' · hasta ' + me.max + ' scripts'}</div>
-    <div class="acts"><button class="btn sm dng" onclick="logout()">Log out</button></div>
+  const avatar = me.discord_avatar
+    ? `<img src="${esc(me.discord_avatar)}" width="64" height="64" style="border-radius:50%;border:2px solid var(--line)" alt="">`
+    : `<div style="width:64px;height:64px;border-radius:50%;background:#1a1a1a;border:2px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:28px;color:var(--mu)">${esc((me.username||'?')[0].toUpperCase())}</div>`;
+  $('#v-profile').innerHTML = `<div class="card" style="max-width:560px">
+    <div style="display:flex;align-items:center;gap:16px">
+      ${avatar}
+      <div>
+        <div style="font-size:20px;font-weight:700">${esc(me.username)}</div>
+        <small style="color:var(--mu)">${esc(me.email || 'Sin correo (Discord login)')}</small>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="stat"><small>Plan actual</small><b>${esc(me.plan)}</b></div>
+      <div class="stat"><small>Límite scripts</small><b>${me.max == null ? '∞' : me.max}</b></div>
+      <div class="stat"><small>Discord</small><b>${me.discord ? '✅ Conectado' : '❌ No conectado'}</b></div>
+      <div class="stat"><small>Scripts creados</small><b>${(window.__list||[]).length}</b></div>
+    </div>
+    <div class="sep"></div>
+    <div class="acts">
+      ${!me.discord ? '<a class="btn sm pri" href="/auth/discord?link=1">Conectar Discord</a>' : ''}
+      <button class="btn sm dng" onclick="logout()">Log out</button>
+    </div>
   </div>`;
+}
+
+function renderPlans() {
+  const me = window.__me || {};
+  const cur = (me.plan || 'free').toLowerCase();
+  const plans = [
+    { id:'free', name:'Free', price:'$0', feats:['2 scripts','50 keys por script','Acceso básico'], color:'#eaeaea' },
+    { id:'premium', name:'Premium', price:'$3/mo', feats:['10 scripts','Keys ilimitadas','Soporte prioritario'], color:'#e8b4b8' },
+    { id:'plus', name:'Plus', price:'$5/mo', feats:['Scripts ilimitados','Todo ilimitado','Acceso anticipado'], color:'#9b59b6' },
+  ];
+  const cards = plans.map((p) => {
+    const isCurrent = cur === p.id;
+    let btn = '';
+    if (isCurrent) {
+      btn = `<button class="btn plan-btn" disabled style="opacity:.5;cursor:default">You already have this plan</button>`;
+    } else {
+      btn = `<button class="btn pri plan-btn" onclick="toast('Contact an admin to upgrade to ${p.name}')">Buy ${p.name}</button>`;
+    }
+    return `<div class="plan-box${isCurrent?' current':''}">
+      <b>${p.name}</b><div class="pr">${p.price}</div>
+      <ul>${p.feats.map((f)=>`<li>${f}</li>`).join('')}</ul>
+      ${btn}
+    </div>`;
+  }).join('');
+  const redeemBox = `<div class="redeem-wrap">
+    <h4>🎟️ Redeem a plan code</h4>
+    <small>Have a Premium or Plus activation key? Enter it below to claim your plan.</small>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="plan-code" placeholder="PREMIUM_xxx... or PLUS_xxx..." style="flex:1;min-width:0">
+      <button class="btn sm pri" onclick="redeemPlanCode()">Redeem</button>
+    </div>
+    <div class="err" id="plan-code-err"></div>
+  </div>`;
+  $('#v-plans').innerHTML = `<div class="head"><div><h2>Planes</h2><small>Elige el plan que mejor te va</small></div></div>
+    <div class="plan-wrap">${cards}</div>${redeemBox}`;
+}
+async function redeemPlanCode() {
+  const val = ($('#plan-code').value||'').trim();
+  if (!val) { $('#plan-code-err').textContent='Enter a code first.'; return; }
+  if (!val.startsWith('PREMIUM_') && !val.startsWith('PLUS_')) { $('#plan-code-err').textContent='Invalid code format.'; return; }
+  $('#plan-code-err').textContent='';
+  toast('Feature coming soon — contact an admin with your code.');
+}
+
+// Admin panel
+const IS_ADMIN = () => {
+  const me = window.__me || {};
+  return me.is_admin === true || me.plan === 'admin';
+};
+function renderAdmin() {
+  const stats = window.__list || [];
+  const totalKeys = stats.reduce((a,s) => a + (s.keys||0), 0);
+  const totalRuns = stats.reduce((a,s) => a + (s.runs||s.d30||0), 0);
+  $('#v-admin').innerHTML = `
+    <div class="head"><div><h2>🛡️ Admin Panel</h2><small>Control total del servidor</small></div></div>
+    <div class="admin-grid">
+      <div class="admin-card">
+        <h4>📊 Estadísticas globales</h4>
+        <div class="mini">
+          <div><small>Scripts</small><b>${stats.length}</b></div>
+          <div><small>Keys totales</small><b>${fmt(totalKeys)}</b></div>
+          <div><small>Ejecuciones (30d)</small><b>${fmt(totalRuns)}</b></div>
+        </div>
+      </div>
+      <div class="admin-card">
+        <h4>🔑 Generar plan key</h4>
+        <small>Genera una clave de activación para Premium o Plus</small>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn sm pri" onclick="adminGenKey('premium')">Generar Premium</button>
+          <button class="btn sm pri" onclick="adminGenKey('plus')">Generar Plus</button>
+        </div>
+        <div id="gen-key-out" class="key-out" hidden></div>
+      </div>
+      <div class="admin-card">
+        <h4>👑 Dar rol de plan</h4>
+        <small>Asigna Premium o Plus a un usuario por Discord ID</small>
+        <input id="admin-uid" placeholder="Discord User ID">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn sm" onclick="adminGiveRole('premium')">Dar Premium</button>
+          <button class="btn sm" onclick="adminGiveRole('plus')">Dar Plus</button>
+        </div>
+        <div class="err" id="admin-role-err"></div>
+      </div>
+      <div class="admin-card">
+        <h4>📜 Scripts del servidor</h4>
+        <small>Todos los scripts registrados</small>
+        ${stats.map((s) => `<div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:6px"><span style="flex:1;font-weight:600">${esc(s.name||s.slug)}</span><span class="tag ${s.enabled?'on':'off'}">${s.enabled?'activo':'pausado'}</span><small>${fmt(s.d30)} runs</small></div>`).join('')||'<small>No hay scripts.</small>'}
+      </div>
+      <div class="admin-card">
+        <h4>🤖 Comandos del bot</h4>
+        <small>Referencia rápida de los comandos disponibles</small>
+        <div style="font:12px/1.7 ui-monospace,monospace;color:var(--mu)">
+          /wl [user] [script] [temp]<br>
+          /adminpremium [user]<br>
+          /adminplus [user]<br>
+          /genplankey [plan]<br>
+          /generatekey [script]<br>
+          /whitelist [user] [script]<br>
+          /blacklist [script]<br>
+          /deletekey [script]<br>
+          /panel [script]<br>
+        </div>
+      </div>
+    </div>`;
+}
+function adminGenKey(plan) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz0123456789';
+  const r = (n) => Array.from({length:n},()=>chars[Math.floor(Math.random()*chars.length)]).join('');
+  const digits = '0123456789'; const rd = (n) => Array.from({length:n},()=>digits[Math.floor(Math.random()*digits.length)]).join('');
+  const up = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; const ru = (n) => Array.from({length:n},()=>up[Math.floor(Math.random()*up.length)]).join('');
+  let key;
+  if (plan === 'plus') {
+    key = `PLUS_${rd(4)}${ru(5)}${r(5)}-${rd(2)}`;
+  } else {
+    key = `PREMIUM_${r(8)}${rd(5)}${r(4)}_${rd(2)}`;
+  }
+  const el = $('#gen-key-out');
+  el.textContent = key;
+  el.hidden = false;
+  copy(key, 'Key copied!');
+}
+async function adminGiveRole(plan) {
+  const uid = ($('#admin-uid').value||'').trim();
+  $('#admin-role-err').textContent = '';
+  if (!uid) { $('#admin-role-err').textContent='Enter a Discord User ID.'; return; }
+  toast(`To give ${plan} role to ${uid}, use the bot command: /admin${plan} and mention the user.`);
 }
 
 boot();
