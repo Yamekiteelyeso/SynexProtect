@@ -28,7 +28,12 @@ const hasRole = (member, id) => {
 const isAdmin = (i) => !!i.guild && (i.guild.ownerId === i.user.id || !!(i.memberPermissions && i.memberPermissions.has(PermissionFlagsBits.Administrator)));
 const isManager = (i) => isAdmin(i) || !!(i.memberPermissions && i.memberPermissions.has(PermissionFlagsBits.ManageGuild));
 const ownScript = (i, slug) => (isAdmin(i) ? C.scriptBySlug(slug) : C.scriptForOwner(slug, i.user.id));
-const ownedKey = (scriptId, uid) => db.prepare('select * from lkeys where script_id=? and owner_discord_id=? and blacklisted=0 order by id limit 1').get(scriptId, uid);
+// Prioriza una key vigente (no vencida) del usuario; si no tiene ninguna vigente, cae a la más reciente igual (vencida), para no perder info en /stats, etc.
+const ownedKey = (scriptId, uid) => {
+  const now = Date.now();
+  return db.prepare('select * from lkeys where script_id=? and owner_discord_id=? and blacklisted=0 and (expires_at is null or expires_at>=?) order by id desc limit 1').get(scriptId, uid, now)
+    || db.prepare('select * from lkeys where script_id=? and owner_discord_id=? and blacklisted=0 order by id desc limit 1').get(scriptId, uid);
+};
 const isBuyer = (member, s) => !!s.buyer_role_id && hasRole(member, s.buyer_role_id);
 const blocked = (s, uid, member) => {
   const t = db.prepare('select target from blacklist where script_id=?').all(s.id).map((r) => r.target);
@@ -107,12 +112,21 @@ function onAutocomplete(i) {
 async function checkExpiries() {
   const rows = db.prepare('select k.id, k.owner_discord_id from lkeys k join scripts s on s.id=k.script_id where s.expiry_dm=1 and k.notified=0 and k.owner_discord_id is not null and k.expires_at is not null and k.expires_at < ?').all(Date.now());
   for (const r of rows) {
-    db.prepare('update lkeys set notified=1 where id=?').run(r.id);
     try {
       const u = await client.users.fetch(r.owner_discord_id);
       const e = new EmbedBuilder().setColor(0xed4245).setTitle('Key expired').setDescription('your key expired\nbuy another key or ignore this message');
       await u.send({ embeds: [e] });
-    } catch (err) { console.error('[expiry-dm]', err.message); }
+      // Solo marcamos como notificado si el DM realmente salió. Antes se marcaba
+      // antes de intentar el envío, así que un fallo puntual (DMs cerrados, fetch
+      // fallido, etc.) dejaba esa key sin notificar para siempre.
+      db.prepare('update lkeys set notified=1 where id=?').run(r.id);
+    } catch (err) {
+      console.error('[expiry-dm]', err.message);
+      // 50007 = el usuario tiene los DMs cerrados / no acepta DMs del bot.
+      // 10013 = usuario inexistente (cuenta borrada). Son errores permanentes:
+      // reintentar por siempre no sirve, así que ahí sí lo marcamos notificado.
+      if (err.code === 50007 || err.code === 10013) db.prepare('update lkeys set notified=1 where id=?').run(r.id);
+    }
   }
 }
 
@@ -125,8 +139,6 @@ async function onCommand(i) {
     const lines = rows.map((r) => { const st = C.runStats(r.id); return `• **${r.slug}** — ${r.enabled ? 'active' : 'paused'} · ${r.free ? 'free' : 'key required'} · today ${st.d1} · 7d ${st.d7} · 30d ${st.d30}`; });
     return say(i, `**Your scripts**\n${lines.join('\n')}`);
   }
-  if (cmd === 'stats') return sayE(i, [statsEmbed(s, C.runStats(s.id), null)]);
-
   if (cmd === 'generatekey') {
     if (!isAdmin(i)) return say(i, 'Only a server administrator can generate keys.');
     const s = C.scriptBySlug(i.options.getString('script'));
@@ -142,7 +154,8 @@ async function onCommand(i) {
     if (!isManager(i)) return say(i, 'Only a server administrator or manager can use this.');
     const k = db.prepare('select * from lkeys where k=?').get(i.options.getString('key').trim());
     if (!k) return say(i, 'Key not found.');
-    const base = Math.max(Date.now(), k.expires_at || 0);
+    if (k.expires_at == null) return say(i, 'That key is lifetime already, no need to add time.');
+    const base = Math.max(Date.now(), k.expires_at);
     db.prepare('update lkeys set expires_at=?, notified=0 where id=?').run(base + i.options.getInteger('days') * C.DAY, k.id);
     return say(i, 'Time added.');
   }
@@ -150,6 +163,10 @@ async function onCommand(i) {
   const s = ownScript(i, i.options.getString('script'));
   if (!s) return say(i, "I couldn't find that script in your account.");
 
+  // Bug viejo: este case estaba arriba, ANTES de que "s" existiera (TDZ de "const s"),
+  // así que /stats tiraba ReferenceError en cada uso y el usuario solo veía
+  // "Something went wrong, please try again." sin relación con lo que pidió.
+  if (cmd === 'stats') return sayE(i, [statsEmbed(s, C.runStats(s.id), null)]);
   if (cmd === 'expirydm') {
     db.prepare('update scripts set expiry_dm=? where id=?').run(i.options.getBoolean('enabled') ? 1 : 0, s.id);
     return say(i, `Expiry DM for **${s.slug}** is now ${i.options.getBoolean('enabled') ? 'ON' : 'OFF'}.`);
