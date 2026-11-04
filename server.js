@@ -136,7 +136,7 @@ app.get('/api/me', auth, (req, res) => {
   });
 });
 app.get('/api/scripts', auth, (req, res) => {
-  const rows = db.prepare('select id,hid,slug,name,enabled,free,buyer_role_id,hwid_days,runs,created,(select count(*) from lkeys where script_id=scripts.id) keys from scripts where user_id=? order by id desc').all(req.user.id);
+  const rows = db.prepare('select id,hid,slug,name,enabled,free,expiry_dm,buyer_role_id,hwid_days,runs,created,(select count(*) from lkeys where script_id=scripts.id) keys from scripts where user_id=? order by id desc').all(req.user.id);
   const b = base(req);
   res.json(rows.map((r) => {
     const k = db.prepare('select k from lkeys where script_id=? and blacklisted=0 order by id limit 1').get(r.id);
@@ -160,6 +160,7 @@ app.patch('/api/scripts/:id', auth, ownScript, (req, res) => {
   const b = req.body || {};
   if (typeof b.enabled === 'boolean') db.prepare('update scripts set enabled=? where id=?').run(b.enabled ? 1 : 0, req.script.id);
   if (typeof b.free === 'boolean') db.prepare('update scripts set free=? where id=?').run(b.free ? 1 : 0, req.script.id);
+  if (typeof b.expiry_dm === 'boolean') db.prepare('update scripts set expiry_dm=? where id=?').run(b.expiry_dm ? 1 : 0, req.script.id);
   if (typeof b.buyer_role_id === 'string') db.prepare('update scripts set buyer_role_id=? where id=?').run(/^\d{5,25}$/.test(b.buyer_role_id) ? b.buyer_role_id : null, req.script.id);
   if (b.hwid_days != null) {
     const d = Math.min(365, Math.max(1, parseInt(b.hwid_days, 10) || 7));
@@ -213,5 +214,14 @@ app.get('/files/v1/payload/:slug', (req, res) => {
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 const PORT = Number(process.env.PORT) || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log('[web] listo en puerto', PORT));
-if (process.env.DISCORD_BOT_TOKEN) require('./bot').start();
+let botStarted = false;
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log('[web] listo en puerto', PORT);
+  if (!botStarted && process.env.DISCORD_BOT_TOKEN) { botStarted = true; require('./bot').start(); }
+});
+// Si Railway levanta dos instancias a la vez (deploys superpuestos), la segunda espera en vez de caerse.
+server.on('error', (e) => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  console.error('[web] puerto', PORT, 'ocupado, reintento en 3 s');
+  setTimeout(() => server.listen(PORT, '0.0.0.0'), 3000);
+});
