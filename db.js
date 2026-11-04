@@ -1,7 +1,10 @@
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('fs');
 const path = require('path');
-const file = process.env.DB_PATH || (fs.existsSync('/data') ? '/data/synex.db' : path.join(__dirname, 'data', 'synex.db'));
+let file = process.env.DB_PATH || '';
+// En Railway con Volume en /data, siempre usamos /data (una ruta relativa se borra en cada deploy).
+if (!file || (!path.isAbsolute(file) && fs.existsSync('/data'))) file = fs.existsSync('/data') ? '/data/synex.db' : path.join(__dirname, 'data', 'synex.db');
+console.log('[db] usando', file, fs.existsSync('/data') ? '(Volume detectado)' : '(sin /data: los datos pueden perderse en cada deploy)');
 fs.mkdirSync(path.dirname(file), { recursive: true });
 const db = new DatabaseSync(file);
 db.exec('PRAGMA journal_mode = WAL;');
@@ -27,4 +30,5 @@ create index if not exists ix_lk on lkeys(script_id);
 create index if not exists ix_ex on execs(script_id, ts);
 `);
 db.prepare('delete from execs where ts < ?').run(Date.now() - 90 * 864e5);
+db.DB_FILE = file;
 module.exports = db;
