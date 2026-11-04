@@ -29,6 +29,9 @@ create table if not exists execs(id integer primary key, script_id integer not n
 create index if not exists ix_lk on lkeys(script_id);
 create index if not exists ix_ex on execs(script_id, ts);
 `);
+try { db.exec('alter table scripts add column hid text'); } catch {}
+for (const r of db.prepare('select id from scripts where hid is null').all()) db.prepare('update scripts set hid=? where id=?').run(require('crypto').randomBytes(14).toString('hex'), r.id);
+db.exec('create unique index if not exists ix_hid on scripts(hid);');
 db.prepare('delete from execs where ts < ?').run(Date.now() - 90 * 864e5);
 db.DB_FILE = file;
 module.exports = db;
