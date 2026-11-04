@@ -10,7 +10,8 @@ a{color:inherit}button{font:inherit;cursor:pointer}
 .btn:hover{background:#242424;border-color:#3a3a3a}.btn.pri{background:var(--ac);color:#0a0a0a;border-color:var(--ac)}.btn.pri:hover{background:#fff}
 .btn.sm{width:auto;padding:6px 10px;font-size:13px;font-weight:500}.btn.dng{color:var(--er)}
 input,textarea,select{width:100%;background:#0b0b0b;color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:inherit;outline:none;margin-top:8px}
-input:focus,textarea:focus{border-color:#555}textarea{font-family:ui-monospace,Consolas,monospace;font-size:13px;min-height:180px;resize:vertical}
+input:focus,textarea:focus{border-color:#555}textarea{font-family:ui-monospace,Consolas,monospace;font-size:13px;min-height:180px;resize:vertical;background:#000!important;color:#b5b5b5!important}
+input[type=file]{color:var(--mu);padding:9px}
 label{display:block;color:var(--mu);font-size:13px;margin:12px 0 0}
 small,.mu{color:var(--mu);font-size:13px}
 [hidden]{display:none!important}
@@ -48,7 +49,7 @@ main{max-width:1080px;margin:0 auto;padding:26px 22px 60px}
 .tag.on{color:var(--ok);border-color:#2d4a37}.tag.off{color:var(--er);border-color:#4a2d2d}
 .mini{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.mini div{background:#0b0b0b;border:1px solid var(--line);border-radius:10px;padding:8px 10px}.mini b{display:block;font-size:16px}
 .acts{display:flex;flex-wrap:wrap;gap:6px}
-.code{background:#0a0a0a;border:1px solid var(--line);border-radius:10px;padding:10px;font:12.5px/1.5 ui-monospace,Consolas,monospace;color:#bdf5cc;white-space:pre-wrap;word-break:break-all;margin:0}
+.code{background:#000;border:1px solid var(--line);border-radius:10px;padding:12px;font:12.5px/1.6 ui-monospace,Consolas,monospace;color:#b5b5b5;white-space:pre-wrap;word-break:break-all;margin:0}
 .panel{background:#0b0b0b;border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:10px}
 .keyrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:8px;font-size:13px}.keyrow code{background:#0a0a0a;padding:4px 8px;border-radius:7px;color:#ddd;word-break:break-all}
 .bars{display:flex;align-items:flex-end;gap:4px;height:90px}.bars div{flex:1;background:#ddd;border-radius:4px 4px 0 0;min-height:2px;opacity:.85}
@@ -188,10 +189,10 @@ async function refresh() {
 }
 function card(x) {
   return `<div class="card">
-    <div class="row"><h3>${esc(x.slug)}</h3><span class="tag ${x.enabled ? 'on' : 'off'}">${x.enabled ? 'Active' : 'Paused'}</span><span class="tag">${x.free ? 'Free' : 'Key required'}</span></div>
+    <div class="row"><span class="sp"></span><span class="tag ${x.enabled ? 'on' : 'off'}">${x.enabled ? 'Active' : 'Paused'}</span><span class="tag">${x.free ? 'Free' : 'Key required'}</span></div>
+    <pre class="code">${esc(x.loadstring)}</pre>
     <div class="mini"><div><small>Today</small><b>${fmt(x.d1)}</b></div><div><small>7 days</small><b>${fmt(x.d7)}</b></div><div><small>30 days</small><b>${fmt(x.d30)}</b></div></div>
     <small>${fmt(x.keys)} keys · HWID reset every ${x.hwid_days} days · ${x.buyer_role_id ? 'buyer role set' : 'no buyer role'}</small>
-    <pre class="code">${esc(x.loadstring)}</pre>
     <div class="acts">
       <button class="btn sm pri" data-l="${esc(x.loadstring)}" onclick="copy(this.dataset.l,'Loadstring copied')">Copy loadstring</button>
       <button class="btn sm" onclick="showKeys(${x.id})">Keys</button>
@@ -202,12 +203,23 @@ function card(x) {
     <div id="p${x.id}"></div>
   </div>`;
 }
+const LOGO = '<svg viewBox="0 0 64 64" width="28" height="28"><rect x="2" y="2" width="60" height="60" rx="16" fill="#000" stroke="#2a2a2a" stroke-width="2"/><path d="M32 10 L49 16 V30 C49 41 42 50 32 54 C22 50 15 41 15 30 V16 Z" fill="#eaeaea"/><path d="M39 24 C37 21 27 21 27 27 C27 33 39 31 39 38 C39 44 28 44 25 40" fill="none" stroke="#000" stroke-width="4.5" stroke-linecap="round"/></svg>';
 function openNew() {
-  openDlg(`<h3>New script</h3><small>It gets its own loadstring link.</small>
+  openDlg(`<div style="display:flex;gap:10px;align-items:center">${LOGO}<h3 style="margin:0">New script</h3></div><small>It gets its own loadstring link.</small>
     <label>Link name</label><input id="nm" maxlength="24" placeholder="my-script">
     <label>Lua code</label><textarea id="ct" placeholder="-- paste your script"></textarea>
+    <label>Or upload a file (.lua or .txt)</label><input type="file" id="fu" accept=".lua,.txt,text/plain">
     <label style="display:flex;gap:8px;align-items:center;color:var(--tx)"><input type="checkbox" id="fr" style="width:auto;margin:0"> Free (no key required)</label>
     <div class="da"><button class="btn sm" onclick="close()">Cancel</button><button class="btn sm pri" id="go">Create</button></div>`);
+  $('#fu').onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      $('#ct').value = r.result;
+      if (!$('#nm').value) $('#nm').value = f.name.replace(/\.(lua|txt)$/i, '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
+    };
+    r.readAsText(f);
+  };
   $('#go').onclick = async () => {
     try { await api('/api/scripts', { m: 'POST', b: { name: $('#nm').value, content: $('#ct').value, free: $('#fr').checked } }); close(); toast('Script created'); await refresh(); }
     catch (e) { toast(e.message); }
