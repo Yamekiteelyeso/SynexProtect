@@ -147,7 +147,8 @@ app.get('/api/scripts', auth, (req, res) => {
 app.post('/api/scripts', auth, (req, res) => {
   const { name, content, free } = req.body || {};
   const count = db.prepare('select count(*) c from scripts where user_id=?').get(req.user.id).c;
-  if (count >= C.maxScripts(req.user)) return res.status(403).json({ error: `El plan gratis permite ${C.PLAN_MAX} scripts. Pasate a Pro para más.` });
+  const max = C.maxScripts(req.user);
+  if (count >= max) return res.status(403).json({ error: `You already have ${max} scripts. Delete one or buy the premium subscription to have ${C.PREMIUM_MAX} scripts.` });
   const limit = req.user.admin ? 100 * 1048576 : 1048576;
   if (typeof content !== 'string' || !content.trim() || Buffer.byteLength(content) > limit) return res.status(400).json({ error: `Script vacío o pesa más de ${req.user.admin ? '100 MB' : '1 MB'}` });
   let slug = C.slugify(name);
