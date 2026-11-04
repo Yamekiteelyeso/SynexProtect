@@ -54,7 +54,7 @@ const scriptOpt = (o) => o.setName('script').setDescription('Script slug').setRe
 const defs = [
   new SlashCommandBuilder().setName('generatekey').setDescription('Generate keys for a script (admin)')
     .addStringOption(scriptOpt)
-    .addIntegerOption((o) => o.setName('days').setDescription('Days valid (empty = lifetime)').setMinValue(1).setMaxValue(3650))
+    .addStringOption((o) => o.setName('duration').setDescription('e.g. 30s, 5m, 1h, 1d, 1w, 1y or perma (default: perma)'))
     .addIntegerOption((o) => o.setName('amount').setDescription('Amount, 1-50').setMinValue(1).setMaxValue(50)),
   new SlashCommandBuilder().setName('addtime').setDescription('Add days to a key (admin/manager)')
     .addStringOption((o) => o.setName('key').setDescription('Key').setRequired(true))
@@ -116,8 +116,11 @@ async function onCommand(i) {
     if (!isAdmin(i)) return say(i, 'Only a server administrator can generate keys.');
     const s = C.scriptBySlug(i.options.getString('script'));
     if (!s) return say(i, 'Script not found.');
-    const keys = C.createKeys(s.id, { days: i.options.getInteger('days'), count: i.options.getInteger('amount') || 1 });
-    return say(i, `Keys for **${s.slug}**:\n${keys.map((k) => '`' + k + '`').join('\n')}`);
+    const dur = C.parseDuration(i.options.getString('duration'));
+    if (dur === undefined) return say(i, 'Invalid duration. Use e.g. 30s, 5m, 1h, 1d, 1w, 1y or perma.');
+    const keys = C.createKeys(s.id, { ms: dur, count: i.options.getInteger('amount') || 1 });
+    const exp = dur ? `Expires: ${new Date(Date.now() + dur).toLocaleString('en-US')}` : 'Lifetime';
+    return say(i, `Keys for **${s.slug}** (${exp}):\n${keys.map((k) => '`' + k + '`').join('\n')}`);
   }
 
   if (cmd === 'addtime') {
