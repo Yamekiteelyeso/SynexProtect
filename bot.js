@@ -26,8 +26,9 @@ const reply = (i, payload) => {
 const say = (i, content) => reply(i, { content });
 const sayE = (i, embeds) => reply(i, { embeds });
 const errEmbed = (text) => new EmbedBuilder().setColor(0xed4245).setTitle('ERROR').setDescription(text);
-// Respuesta de canje: texto normal, o embed rojo si es un error marcado con { error }.
-const redeemReply = (i, r) => (typeof r === 'object' && r && r.error ? sayE(i, [errEmbed(r.error)]) : say(i, typeof r === 'object' ? r.ok : r));
+const okEmbed = (text) => new EmbedBuilder().setColor(0x57f287).setTitle('SUCCESS').setDescription(text);
+// Redeem answers are always embeds: red for { error }, green for { ok }.
+const redeemReply = (i, r) => (r && r.error ? sayE(i, [errEmbed(r.error)]) : sayE(i, [okEmbed(r.ok)]));
 
 const n = (x) => Number(x || 0).toLocaleString('en-US');
 const fmtDate = (t) => (t ? new Date(t).toUTCString() : 'Never');
@@ -72,22 +73,48 @@ const blocked = (s, uid, member) => {
 };
 
 // ---------- Redeem ----------
+// The valid key a user already holds for a script (not blacklisted, not expired).
+const validKeyOf = (scriptId, uid) => db.prepare('select * from lkeys where script_id=? and owner_discord_id=? and blacklisted=0 and (expires_at is null or expires_at>=?) order by id desc limit 1').get(scriptId, uid, Date.now()) || null;
+// Adds time to an existing key. ms = null means lifetime.
+function addTime(row, ms) {
+  if (ms === null) db.prepare('update lkeys set expires_at=null, notified=0, role_revoked=0 where id=?').run(row.id);
+  else db.prepare('update lkeys set expires_at=expires_at+?, notified=0, role_revoked=0 where id=?').run(ms, row.id);
+  return db.prepare('select * from lkeys where id=?').get(row.id);
+}
+// Gives uid a key for the script (ms null = lifetime). If they already hold a valid one, time is added to it.
+function grantToUser(scriptId, uid, ms) {
+  const current = validKeyOf(scriptId, uid);
+  if (current) return current.expires_at == null ? current : addTime(current, ms);
+  const [k] = C.createKeys(scriptId, { ms });
+  db.prepare('update lkeys set owner_discord_id=? where k=?').run(uid, k);
+  return db.prepare('select * from lkeys where k=?').get(k);
+}
 async function redeemKey(member, uid, raw) {
   const key = C.normKey(raw);
-  if (!key) return 'Please enter a key.';
+  if (!key) return { error: 'Please enter a key.' };
   const k = db.prepare('select * from lkeys where k=?').get(key);
-  if (!k) return 'Invalid key.';
+  if (!k) return { error: 'This key is invalid.' };
   const s = db.prepare('select * from scripts where id=?').get(k.script_id);
-  if (!s || !s.enabled) return 'This script is currently paused or no longer exists.';
-  if (k.blacklisted) return 'This key has been disabled.';
-  if (C.expired(k)) return { error: 'this key expired' };
-  if (k.owner_discord_id && k.owner_discord_id !== uid) return { error: 'this key has already been claimed by someone else' };
-  if (!member) return "I couldn't read your server profile. Try again in a moment.";
-  if (blocked(s, uid, member)) return 'Your account is blocked on this script.';
-  // Atomic claim: only succeeds if nobody else took the key in the meantime.
-  const claimed = db.prepare('update lkeys set owner_discord_id=? where id=? and (owner_discord_id is null or owner_discord_id=?)').run(uid, k.id, uid);
-  if (!claimed.changes) return { error: 'this key has already been claimed by someone else' };
+  if (!s || !s.enabled) return { error: 'This script is currently paused or no longer exists.' };
+  if (k.blacklisted) return { error: 'This key has been disabled.' };
+  if (C.expired(k)) return { error: 'This key has expired.' };
+  // Claimed from the panel or with .redeem, by anyone: the same answer for everybody.
+  if (k.owner_discord_id) return { error: 'This key has already been claimed.' };
+  if (!member) return { error: "I couldn't read your server profile. Try again in a moment." };
+  if (blocked(s, uid, member)) return { error: 'Your account is blocked on this script.' };
   const name = s.name || s.slug;
+  // Already holds a valid key for this script: the time of the new key is added to it and the new key is used up.
+  const current = validKeyOf(s.id, uid);
+  if (current) {
+    if (current.expires_at == null) return { error: 'You already have a lifetime key for this script.' };
+    const ms = k.expires_at == null ? null : Math.max(0, k.expires_at - Date.now());
+    const updated = addTime(current, ms);
+    db.prepare('delete from lkeys where id=?').run(k.id);
+    return { ok: `Time from the new key was added to your key on **${name}**.\nNew expiry: ${updated.expires_at ? fmtDate(updated.expires_at) : 'Lifetime'}` };
+  }
+  // Atomic claim: only succeeds if nobody else took the key in the meantime.
+  const claimed = db.prepare('update lkeys set owner_discord_id=? where id=? and owner_discord_id is null').run(uid, k.id);
+  if (!claimed.changes) return { error: 'This key has already been claimed.' };
   if (!s.buyer_role_id) return { ok: `Key redeemed on **${name}**, but no buyer role is set yet. Ask the owner to set it.` };
   try { await member.roles.add(s.buyer_role_id); }
   catch (e) { console.error('[role]', e.message); return { ok: `Key redeemed on **${name}**, but I couldn't give you the buyer role. Ask an admin to check my role permissions.` }; }
@@ -125,6 +152,10 @@ const defs = [
   new SlashCommandBuilder().setName('stats').setDescription('Execution stats of a script (owner/admin)').addStringOption(scriptOpt),
   new SlashCommandBuilder().setName('redeem').setDescription('Redeem a key')
     .addStringOption((o) => o.setName('key').setDescription('Your key').setRequired(true)),
+  new SlashCommandBuilder().setName('whitelist').setDescription('Give a user a key for a script (owner/admin)')
+    .addUserOption((o) => o.setName('user').setDescription('User to whitelist').setRequired(true))
+    .addStringOption(scriptOpt)
+    .addStringOption((o) => o.setName('duration').setDescription('e.g. 7d, 1m, 1y or perma (default: permanent)')),
   new SlashCommandBuilder().setName('resethwid').setDescription('Reset the HWID of a user on a script (owner/admin)')
     .addStringOption(scriptOpt)
     .addUserOption((o) => o.setName('user').setDescription('User').setRequired(true)),
@@ -289,6 +320,18 @@ async function onCommand(i) {
   const s = ownScript(i, i.options.getString('script'));
   if (!s) return say(i, "I couldn't find that script in your account.");
 
+  if (cmd === 'whitelist') {
+    const u = i.options.getUser('user');
+    const dur = C.parseDuration(i.options.getString('duration'));
+    if (dur === undefined) return sayE(i, [errEmbed('Invalid duration. Use e.g. 7d, 1m, 1y or perma.')]);
+    const key = grantToUser(s.id, u.id, dur || null);
+    let roleNote = '';
+    if (s.buyer_role_id) {
+      try { const m = await i.guild.members.fetch(u.id); await m.roles.add(s.buyer_role_id); }
+      catch (e) { console.error('[whitelist role]', e.message); roleNote = "\nI couldn't give the buyer role. Check my role permissions."; }
+    }
+    return sayE(i, [okEmbed(`**${u.username}** is now whitelisted on **${s.name || s.slug}**.\nKey: \`${key.k}\`\nExpires: ${key.expires_at ? fmtDate(key.expires_at) : 'Lifetime'}${roleNote}`)]);
+  }
   if (cmd === 'stats') return sayE(i, [statsEmbed(s, C.runStats(s.id), null)]);
 
   if (cmd === 'deletekey') {
@@ -381,10 +424,13 @@ async function onButton(i) {
 
   if (act === 'getrole') {
     if (!validKey) return sayE(i, [denyEmbed()]);
-    if (!s.buyer_role_id) return say(i, 'No buyer role is set for this script yet.');
+    if (!s.buyer_role_id) return sayE(i, [errEmbed('No buyer role is set for this script yet.')]);
+    if (hasRole(i.member, s.buyer_role_id)) {
+      return sayE(i, [new EmbedBuilder().setColor(0xfee75c).setTitle('Already have this role').setDescription('You already have this role.')]);
+    }
     try { await i.member.roles.add(s.buyer_role_id); }
-    catch (e) { console.error('[role]', e.message); return say(i, "I couldn't give you the role. Ask an admin to check my role permissions."); }
-    return say(i, 'Role granted.');
+    catch (e) { console.error('[role]', e.message); return sayE(i, [errEmbed("I couldn't give you the role. Ask an admin to check my role permissions.")]); }
+    return sayE(i, [okEmbed('Role granted.')]);
   }
 
   if (act === 'getscript') {
@@ -454,7 +500,7 @@ client.on('messageCreate', async (msg) => {
   if (msg.author.bot || !msg.guild || !msg.content.toLowerCase().startsWith('.redeem ')) return;
   const member = msg.member || (await msg.guild.members.fetch(msg.author.id).catch(() => null));
   const r = await redeemKey(member, msg.author.id, msg.content.slice(8));
-  const out = typeof r === 'object' && r && r.error ? { embeds: [errEmbed(r.error)] } : { content: typeof r === 'object' ? r.ok : r };
+  const out = { embeds: [r.error ? errEmbed(r.error) : okEmbed(r.ok)] };
   msg.reply({ ...out, allowedMentions: { repliedUser: false } }).catch(() => {});
 });
 
