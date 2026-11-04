@@ -8,7 +8,7 @@ db.pragma('journal_mode = WAL');
 db.exec(`
 create table if not exists users(
   id integer primary key, discord_id text unique not null, username text,
-  plan text default 'free', admin integer default 0, guild_id text, created integer);
+  plan text default 'free', admin integer default 0, created integer);
 create table if not exists scripts(
   id integer primary key, user_id integer not null, slug text unique not null, name text,
   content text not null, enabled integer default 1, free integer default 0,
