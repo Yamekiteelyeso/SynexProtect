@@ -282,6 +282,29 @@ function payload(hid, key, hwid, n, ua, t, pl, pu) {
   return enc('SYX2' + csum(body) + body.toString('utf8'));
 }
 
+// ---------- Webhook de ejecución (embed gris, en inglés) ----------
+const WEBHOOK_RE = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+function sendExecWebhook(s, k, placeId, robloxUser) {
+  const name = s.name || s.slug;
+  const payload = {
+    username: 'SynexProtect',
+    embeds: [{
+      author: { name: `User Execute (${name})` },
+      title: `${name} - Script executed`,
+      color: 0x2b2d31,
+      fields: [
+        { name: 'User (Roblox)', value: robloxUser || 'Unknown', inline: true },
+        { name: 'Executions (user)', value: String((k.uses || 0) + 1), inline: true },
+        { name: 'PlaceId', value: placeId || 'Unknown', inline: true },
+        { name: 'Key', value: `\`${k.k}\``, inline: false },
+      ],
+      footer: { text: 'SynexProtect Executes' },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+  fetch(s.webhook_url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
+}
+
 // ---------- Keys ----------
 // Short, simple keys: 16 uppercase letters/digits, grouped XXXX-XXXX-XXXX-XXXX.
 const KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
