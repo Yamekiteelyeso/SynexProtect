@@ -157,7 +157,7 @@ loadstring(game:HttpGet("https://synexprotect.up.railway.app/files/v1/loaders/9f
   </nav>
   <main>
     <div id="banner"></div>
-    <div class="head">
+    <div class="head" id="mainhead">
       <div><h2 id="hi"></h2><small id="sub"></small></div>
       <span class="sp"></span>
       <button class="btn sm pri" onclick="openNew()">+ New script</button>
@@ -315,6 +315,8 @@ function toggleMenu(open) { $('#menu').hidden = !open; $('#scrim').hidden = !ope
 function go(v) {
   toggleMenu(false);
   document.querySelectorAll('.menu button[data-v]').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+  $('#mainhead').hidden = !(v === 'dash' || v === 'scripts');
+  $('#banner').hidden = !(v === 'dash' || v === 'scripts');
   $('#stats').hidden = v !== 'dash';
   $('#list').hidden = !(v === 'dash' || v === 'scripts');
   $('#v-stats').hidden = v !== 'stats';
@@ -400,94 +402,104 @@ function renderPlans() {
 }
 async function redeemPlanCode() {
   const val = ($('#plan-code').value||'').trim();
-  if (!val) { $('#plan-code-err').textContent='Enter a code first.'; return; }
-  if (!val.startsWith('PREMIUM_') && !val.startsWith('PLUS_')) { $('#plan-code-err').textContent='Invalid code format.'; return; }
   $('#plan-code-err').textContent='';
-  toast('Feature coming soon — contact an admin with your code.');
+  if (!val) { $('#plan-code-err').textContent='Escribí una llave primero.'; return; }
+  if (!val.startsWith('PREMIUM_') && !val.startsWith('PLUS_')) { $('#plan-code-err').textContent='Formato de llave inválido.'; return; }
+  try {
+    const r = await api('/api/plan/redeem', { m: 'POST', b: { code: val } });
+    toast('Plan ' + r.plan + ' activado');
+    setTimeout(() => location.reload(), 900);
+  } catch (e) { $('#plan-code-err').textContent = e.message; }
 }
 
-// Admin panel
-const IS_ADMIN = () => {
-  const me = window.__me || {};
-  return me.is_admin === true || me.plan === 'admin';
-};
-function renderAdmin() {
-  const stats = window.__list || [];
-  const totalKeys = stats.reduce((a,s) => a + (s.keys||0), 0);
-  const totalRuns = stats.reduce((a,s) => a + (s.runs||s.d30||0), 0);
-  $('#v-admin').innerHTML = `
+// Admin panel (solo IDs de ADMIN_IDS; el servidor valida todo)
+const IS_ADMIN = () => !!(window.__me && window.__me.is_admin);
+let ADM = null;
+async function renderAdmin() {
+  const v = $('#v-admin');
+  v.innerHTML = '<div class="panel"><small>Cargando…</small></div>';
+  try { ADM = await api('/api/admin/overview'); } catch (e) { v.innerHTML = `<div class="panel"><small>${esc(e.message)}</small></div>`; return; }
+  const t = ADM.totals;
+  const sel = (id, val) => `<select data-uid="${id}" class="adm-plan">${['free','premium','plus'].map((p)=>`<option value="${p}" ${p===val?'selected':''}>${p}</option>`).join('')}</select>`;
+  v.innerHTML = `
     <div class="head"><div><h2>🛡️ Admin Panel</h2><small>Control total del servidor</small></div></div>
+    <div class="stats">
+      <div class="stat"><small>Usuarios</small><b>${fmt(t.users)}</b></div>
+      <div class="stat"><small>Scripts</small><b>${fmt(t.scripts)}</b></div>
+      <div class="stat"><small>Keys totales</small><b>${fmt(t.keys)}</b></div>
+      <div class="stat"><small>Ejecuciones (30d)</small><b>${fmt(t.runs30)}</b></div>
+    </div>
     <div class="admin-grid">
       <div class="admin-card">
-        <h4>📊 Estadísticas globales</h4>
-        <div class="mini">
-          <div><small>Scripts</small><b>${stats.length}</b></div>
-          <div><small>Keys totales</small><b>${fmt(totalKeys)}</b></div>
-          <div><small>Ejecuciones (30d)</small><b>${fmt(totalRuns)}</b></div>
-        </div>
-      </div>
-      <div class="admin-card">
-        <h4>🔑 Generar plan key</h4>
-        <small>Genera una clave de activación para Premium o Plus</small>
+        <h4>🔑 Generar llaves de plan</h4>
+        <small>PREMIUM_… o PLUS_… para canjear en “Planes”</small>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn sm pri" onclick="adminGenKey('premium')">Generar Premium</button>
-          <button class="btn sm pri" onclick="adminGenKey('plus')">Generar Plus</button>
+          <button class="btn sm pri" onclick="admGen('premium')">Generar Premium</button>
+          <button class="btn sm pri" onclick="admGen('plus')">Generar Plus</button>
         </div>
         <div id="gen-key-out" class="key-out" hidden></div>
       </div>
       <div class="admin-card">
-        <h4>👑 Dar rol de plan</h4>
-        <small>Asigna Premium o Plus a un usuario por Discord ID</small>
+        <h4>👑 Dar plan por Discord ID</h4>
         <input id="admin-uid" placeholder="Discord User ID">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn sm" onclick="adminGiveRole('premium')">Dar Premium</button>
-          <button class="btn sm" onclick="adminGiveRole('plus')">Dar Plus</button>
+          <button class="btn sm" onclick="admGrant('premium')">Dar Premium</button>
+          <button class="btn sm" onclick="admGrant('plus')">Dar Plus</button>
+          <button class="btn sm dng" onclick="admGrant('free')">Quitar plan</button>
         </div>
         <div class="err" id="admin-role-err"></div>
       </div>
-      <div class="admin-card">
-        <h4>📜 Scripts del servidor</h4>
-        <small>Todos los scripts registrados</small>
-        ${stats.map((s) => `<div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:6px"><span style="flex:1;font-weight:600">${esc(s.name||s.slug)}</span><span class="tag ${s.enabled?'on':'off'}">${s.enabled?'activo':'pausado'}</span><small>${fmt(s.d30)} runs</small></div>`).join('')||'<small>No hay scripts.</small>'}
+      <div class="admin-card" style="grid-column:1/-1">
+        <h4>🧾 Llaves generadas (${ADM.plankeys.length})</h4>
+        ${ADM.plankeys.map((k)=>`<div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:6px;flex-wrap:wrap">
+          <code style="flex:1;min-width:0;word-break:break-all">${esc(k.k)}</code>
+          <span class="tag ${k.used_by?'off':'on'}">${k.used_by?'usada por '+esc(k.used_by):'libre'}</span>
+          <span class="tag">${esc(k.plan)}</span>
+          ${k.used_by?'':`<button class="btn sm dng" onclick="admDelKey(${k.id})">Borrar</button>`}
+        </div>`).join('')||'<small>No hay llaves.</small>'}
       </div>
-      <div class="admin-card">
-        <h4>🤖 Comandos del bot</h4>
-        <small>Referencia rápida de los comandos disponibles</small>
-        <div style="font:12px/1.7 ui-monospace,monospace;color:var(--mu)">
-          /wl [user] [script] [temp]<br>
-          /adminpremium [user]<br>
-          /adminplus [user]<br>
-          /genplankey [plan]<br>
-          /generatekey [script]<br>
-          /whitelist [user] [script]<br>
-          /blacklist [script]<br>
-          /deletekey [script]<br>
-          /panel [script]<br>
-        </div>
+      <div class="admin-card" style="grid-column:1/-1">
+        <h4>👥 Usuarios</h4>
+        ${ADM.users.map((u)=>`<div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:6px;flex-wrap:wrap">
+          <span style="flex:1;min-width:0;font-weight:600">${esc(u.username)} <small>${esc(u.discord_id||u.email||'')}</small></span>
+          ${sel(u.id, u.plan)}
+        </div>`).join('')}
+      </div>
+      <div class="admin-card" style="grid-column:1/-1">
+        <h4>📜 Scripts</h4>
+        ${ADM.scripts.map((s)=>`<div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:6px;flex-wrap:wrap">
+          <span style="flex:1;min-width:0;font-weight:600">${esc(s.name||s.slug)} <small>por ${esc(s.owner||'?')}</small></span>
+          <small>${fmt(s.keys)} keys · ${fmt(s.d30)} runs</small>
+          <button class="btn sm ${s.enabled?'':'pri'}" onclick="admToggleScript(${s.id}, ${!s.enabled})">${s.enabled?'Pausar':'Activar'}</button>
+        </div>`).join('')||'<small>No hay scripts.</small>'}
       </div>
     </div>`;
+  v.querySelectorAll('.adm-plan').forEach((el)=>el.addEventListener('change', async ()=>{
+    try { await api(`/api/admin/users/${el.dataset.uid}/plan`, { m:'POST', b:{ plan: el.value } }); toast('Plan actualizado'); }
+    catch (e) { toast(e.message); }
+  }));
 }
-function adminGenKey(plan) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz0123456789';
-  const r = (n) => Array.from({length:n},()=>chars[Math.floor(Math.random()*chars.length)]).join('');
-  const digits = '0123456789'; const rd = (n) => Array.from({length:n},()=>digits[Math.floor(Math.random()*digits.length)]).join('');
-  const up = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; const ru = (n) => Array.from({length:n},()=>up[Math.floor(Math.random()*up.length)]).join('');
-  let key;
-  if (plan === 'plus') {
-    key = `PLUS_${rd(4)}${ru(5)}${r(5)}-${rd(2)}`;
-  } else {
-    key = `PREMIUM_${r(8)}${rd(5)}${r(4)}_${rd(2)}`;
-  }
-  const el = $('#gen-key-out');
-  el.textContent = key;
-  el.hidden = false;
-  copy(key, 'Key copied!');
+async function admGen(plan) {
+  try {
+    const r = await api('/api/admin/plankeys', { m: 'POST', b: { plan, count: 1 } });
+    const el = $('#gen-key-out'); el.textContent = r.keys.join('\n'); el.hidden = false;
+    copy(r.keys[0], 'Llave copiada');
+    renderAdmin();
+  } catch (e) { toast(e.message); }
 }
-async function adminGiveRole(plan) {
+async function admDelKey(id) {
+  if (!confirm('¿Borrar esta llave?')) return;
+  try { await api(`/api/admin/plankeys/${id}`, { m: 'DELETE' }); renderAdmin(); } catch (e) { toast(e.message); }
+}
+async function admGrant(plan) {
   const uid = ($('#admin-uid').value||'').trim();
   $('#admin-role-err').textContent = '';
-  if (!uid) { $('#admin-role-err').textContent='Enter a Discord User ID.'; return; }
-  toast(`To give ${plan} role to ${uid}, use the bot command: /admin${plan} and mention the user.`);
+  if (!uid) { $('#admin-role-err').textContent = 'Escribí un Discord ID.'; return; }
+  try { await api('/api/admin/grant', { m: 'POST', b: { discord_id: uid, plan } }); toast(`Plan ${plan} aplicado a ${uid}`); renderAdmin(); }
+  catch (e) { $('#admin-role-err').textContent = e.message; }
+}
+async function admToggleScript(id, enabled) {
+  try { await api(`/api/admin/scripts/${id}`, { m: 'PATCH', b: { enabled } }); renderAdmin(); } catch (e) { toast(e.message); }
 }
 
 boot();
