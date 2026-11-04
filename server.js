@@ -1,5 +1,6 @@
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
@@ -12,7 +13,11 @@ app.use(express.json({ limit: '105mb' }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+const SECRET = process.env.SESSION_SECRET || (() => {
+  const f = path.join(path.dirname(db.DB_FILE), 'session.key');
+  try { return fs.readFileSync(f, 'utf8').trim(); }
+  catch { const k = crypto.randomBytes(32).toString('hex'); try { fs.writeFileSync(f, k); } catch {} return k; }
+})();
 const CID = process.env.DISCORD_CLIENT_ID || '';
 const CSEC = process.env.DISCORD_CLIENT_SECRET || '';
 const BASE_ENV = (process.env.BASE_URL || '').replace(/\/$/, '');
