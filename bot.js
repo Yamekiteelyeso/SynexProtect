@@ -6,9 +6,6 @@ const db = require('./db');
 const C = require('./core');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
-const GUILD = process.env.DISCORD_GUILD_ID || '';
-const OWNER = process.env.OWNER_ID || '';
-const MANAGER = process.env.MANAGER_ROLE_ID || '';
 const BASE = (process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 const ephemeral = { flags: 64 };
 const say = (i, content) => (i.deferred || i.replied ? i.followUp({ content, ...ephemeral }) : i.reply({ content, ...ephemeral }));
@@ -17,8 +14,9 @@ const hasRole = (member, id) => {
   if (!member || !id) return false;
   return Array.isArray(member.roles) ? member.roles.includes(id) : !!(member.roles && member.roles.cache && member.roles.cache.has(id));
 };
-const isAdmin = (i) => i.user.id === OWNER || !!(i.memberPermissions && i.memberPermissions.has(PermissionFlagsBits.Administrator));
-const isManager = (i) => isAdmin(i) || hasRole(i.member, MANAGER);
+// Admin = permiso Administrador en el servidor (o ser dueño del servidor). Gestor = Gestionar servidor.
+const isAdmin = (i) => !!i.guild && (i.guild.ownerId === i.user.id || !!(i.memberPermissions && i.memberPermissions.has(PermissionFlagsBits.Administrator)));
+const isManager = (i) => isAdmin(i) || !!(i.memberPermissions && i.memberPermissions.has(PermissionFlagsBits.ManageGuild));
 const ownScript = (i, slug) => (isAdmin(i) ? C.scriptBySlug(slug) : C.scriptForOwner(slug, i.user.id));
 const ownedKey = (scriptId, uid) => db.prepare('select * from lkeys where script_id=? and owner_discord_id=? and blacklisted=0 order by id limit 1').get(scriptId, uid);
 const isBuyer = (member, s) => !!s.buyer_role_id && hasRole(member, s.buyer_role_id);
@@ -44,11 +42,11 @@ async function redeemKey(member, uid, raw) {
 
 const scriptOpt = (o) => o.setName('script').setDescription('Slug del script').setRequired(true);
 const defs = [
-  new SlashCommandBuilder().setName('generatekey').setDescription('Genera keys para un script (owner/admin)')
+  new SlashCommandBuilder().setName('generatekey').setDescription('Genera keys para un script (admin)')
     .addStringOption(scriptOpt)
     .addIntegerOption((o) => o.setName('days').setDescription('Días de validez (vacío = de por vida)').setMinValue(1).setMaxValue(3650))
     .addIntegerOption((o) => o.setName('amount').setDescription('Cantidad 1-50').setMinValue(1).setMaxValue(50)),
-  new SlashCommandBuilder().setName('addtime').setDescription('Añade días a una key (owner/gestor)')
+  new SlashCommandBuilder().setName('addtime').setDescription('Añade días a una key (admin/gestor)')
     .addStringOption((o) => o.setName('key').setDescription('Key').setRequired(true))
     .addIntegerOption((o) => o.setName('days').setDescription('Días a añadir').setRequired(true).setMinValue(1).setMaxValue(3650)),
   new SlashCommandBuilder().setName('deletekey').setDescription('Elimina una key o las keys de un usuario (creador/gestor)')
@@ -98,10 +96,9 @@ async function onCommand(i) {
   if (cmd === 'redeem') return say(i, await redeemKey(i.member, i.user.id, i.options.getString('key')));
   if (cmd === 'myscripts') {
     const rows = db.prepare('select s.* from scripts s join users u on u.id=s.user_id where u.discord_id=? order by s.id').all(i.user.id);
-    const me = db.prepare('select guild_id from users where discord_id=?').get(i.user.id);
     if (!rows.length) return say(i, 'No tenés scripts todavía. Creálos en la web.');
     const lines = rows.map((r) => { const st = C.runStats(r.id); return `• **${r.slug}** — ${r.enabled ? 'activo' : 'pausado'} · ${r.free ? 'gratis' : 'con key'} · hoy ${st.d1} · 7d ${st.d7} · 30d ${st.d30}`; });
-    return say(i, `**Tus scripts** (servidor vinculado: ${me && me.guild_id ? 'sí' : 'no'})\n${lines.join('\n')}`);
+    return say(i, `**Tus scripts**\n${lines.join('\n')}`);
   }
   if (cmd === 'stats') {
     const s = ownScript(i, i.options.getString('script'));
@@ -111,7 +108,7 @@ async function onCommand(i) {
   }
 
   if (cmd === 'generatekey') {
-    if (!isAdmin(i)) return say(i, 'Solo el owner o un administrador puede generar keys.');
+    if (!isAdmin(i)) return say(i, 'Solo un administrador del servidor puede generar keys.');
     const s = C.scriptBySlug(i.options.getString('script'));
     if (!s) return say(i, 'Script no encontrado.');
     const keys = C.createKeys(s.id, { days: i.options.getInteger('days'), count: i.options.getInteger('amount') || 1 });
@@ -119,7 +116,7 @@ async function onCommand(i) {
   }
 
   if (cmd === 'addtime') {
-    if (!isManager(i)) return say(i, 'Solo el owner o un gestor puede usar esto.');
+    if (!isManager(i)) return say(i, 'Solo un administrador o gestor del servidor puede usar esto.');
     const k = db.prepare('select * from lkeys where k=?').get(i.options.getString('key').trim());
     if (!k) return say(i, 'Key no encontrada.');
     const base = Math.max(Date.now(), k.expires_at || 0);
@@ -230,16 +227,12 @@ client.once('ready', async () => {
   console.log('[bot] conectado como', client.user.tag);
   try {
     const body = defs.map((d) => d.toJSON());
-    if (GUILD) await client.application.commands.set(body, GUILD);
-    else await client.application.commands.set(body);
+    await client.application.commands.set(body);
   } catch (e) { console.error('[bot] comandos:', e.message); }
 });
 client.on('messageDelete', (m) => { db.prepare('delete from panels where message_id=?').run(m.id); });
 client.on('messageDeleteBulk', (ms) => { for (const m of ms.values()) db.prepare('delete from panels where message_id=?').run(m.id); });
 client.on('channelDelete', (c) => { db.prepare('delete from panels where channel_id=?').run(c.id); });
-client.on('guildCreate', (g) => {
-  db.prepare('update users set guild_id=? where discord_id=?').run(g.id, g.ownerId);
-});
 client.on('interactionCreate', async (i) => {
   try {
     if (i.isAutocomplete()) return await onAutocomplete(i);
