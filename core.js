@@ -82,7 +82,7 @@ function loaderLua(hid, base) {
 local SLUG = "__HID__"
 local BASE = "__BASE__"
 local KEY = tostring((getgenv and getgenv().script_key) or script_key or "")
-local BAD = {"httpspy", "simplespy", "remotespy", "hydroxide", "dumper", "envlogger", "decompiler", "saveinstance", "luadec", "unluac", "dumpstring", "scriptdumper"}
+local BAD = {"httpspy", "simplespy", "remotespy", "hydroxide", "dumper", "envlogger"}
 local flagged = false
 pcall(function()
   for name in pairs((getgenv and getgenv()) or _G) do
@@ -121,7 +121,7 @@ body = nil
 if string.sub(plain, 1, 4) == "SYX0" then
   local msg = string.sub(plain, 5)
   plain = nil
-  return warn("[SynexProtect] " .. msg)
+  error("[SynexProtect] " .. msg, 0)
 end
 if string.sub(plain, 1, 4) ~= "SYX2" then plain = nil return warn("[SynexProtect] Respuesta inválida") end
 local want = tonumber(string.sub(plain, 5, 14))
@@ -262,42 +262,24 @@ function payload(hid, key, hwid, n, ua, t, pl, pu) {
   for (const [k2, v2] of usedNonces) if (nowMs - v2 > 180e3) usedNonces.delete(k2);
   if (usedNonces.has(nk)) return deny('Request already used.');
   usedNonces.set(nk, nowMs);
-  const k = db.prepare('select * from lkeys where script_id=? and k=?').get(s.id, normKey(key));
-  if (!k) return deny('Invalid key.');
-  if (k.blacklisted) return deny('This key has been disabled.');
-  if (expired(k)) return deny('Your key has expired.');
-  if (!hwid) return deny('Could not read your HWID.');
-  if (!k.hwid) db.prepare('update lkeys set hwid=? where id=?').run(hwid, k.id);
-  else if (k.hwid !== hwid) return deny('Key is linked to a different HWID.');
-  db.prepare('update lkeys set uses=uses+1, last=? where id=?').run(now(), k.id);
+
+  let k = null;
+  if (!s.free) {
+    if (!String(key || '').trim()) return deny('NO KEY DETECT');
+    k = db.prepare('select * from lkeys where script_id=? and k=?').get(s.id, normKey(key));
+    if (!k) return deny('Key does not exist.');
+    if (k.blacklisted) return deny('This key has been disabled.');
+    if (expired(k)) return deny('Your key has expired.');
+    if (!hwid) return deny('Could not read your HWID.');
+    if (!k.hwid) db.prepare('update lkeys set hwid=? where id=?').run(hwid, k.id);
+    else if (k.hwid !== hwid) return deny('Key is linked to a different HWID.');
+    db.prepare('update lkeys set uses=uses+1, last=? where id=?').run(now(), k.id);
+  }
   db.prepare('update scripts set runs=runs+1 where id=?').run(s.id);
   db.prepare('insert into execs(script_id,ts) values(?,?)').run(s.id, now());
+  if (s.webhook_on && s.webhook_url) sendExecWebhook(s, k || { k: 'FREE (no key)', uses: 0 }, pl, pu);
   const body = Buffer.from(s.content, 'utf8');
-  if (s.webhook_on && s.webhook_url) sendExecWebhook(s, k, pl, pu);
   return enc('SYX2' + csum(body) + body.toString('utf8'));
-}
-
-// ---------- Webhook de ejecución (embed gris, en inglés) ----------
-const WEBHOOK_RE = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
-function sendExecWebhook(s, k, placeId, robloxUser) {
-  const name = s.name || s.slug;
-  const payload = {
-    username: 'SynexProtect',
-    embeds: [{
-      author: { name: `User Execute (${name})` },
-      title: `${name} - Script executed`,
-      color: 0x2b2d31,
-      fields: [
-        { name: 'User (Roblox)', value: robloxUser || 'Unknown', inline: true },
-        { name: 'Executions (user)', value: String((k.uses || 0) + 1), inline: true },
-        { name: 'PlaceId', value: placeId || 'Unknown', inline: true },
-        { name: 'Key', value: `\`${k.k}\``, inline: false },
-      ],
-      footer: { text: 'SynexProtect Executes' },
-      timestamp: new Date().toISOString(),
-    }],
-  };
-  fetch(s.webhook_url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
 }
 
 // ---------- Keys ----------
