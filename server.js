@@ -13,6 +13,8 @@ const RU = 'ABCDEFGHJKLMNPQRSTUVWXYZ', RD = '0123456789', RM = RU + RD + 'abcdef
 const rnd = (chars, n) => { let s = ''; for (let i = 0; i < n; i++) s += chars[crypto.randomInt(chars.length)]; return s; };
 try { db.exec('alter table plan_keys add column dur integer'); } catch {}
 try { db.exec('alter table users add column plan_expires integer'); } catch {}
+try { db.exec('alter table users add column banned integer default 0'); } catch {}
+try { db.exec('alter table users add column blacklisted integer default 0'); } catch {}
 // Duraciones de llaves de plan (m = mes, no minuto)
 const PLAN_DUR = { '1s': 1e3, '1d': 864e5, '2d': 2 * 864e5, '1w': 7 * 864e5, '1m': 30 * 864e5, '1y': 365 * 864e5, perma: 0 };
 const genPlanKey = (plan) => plan === 'plus'
@@ -66,9 +68,13 @@ function auth(req, res, next) {
     const u = db.prepare('select * from users where id=?').get(p.id);
     if (!u) throw new Error('no user');
     if (u.plan_expires && u.plan_expires < Date.now()) { db.prepare('update users set plan=?, plan_expires=null where id=?').run('free', u.id); u.plan = 'free'; u.plan_expires = null; }
+    if (u.banned) throw Object.assign(new Error('banned'), { banned: true });
     req.user = u;
     next();
-  } catch { res.status(401).json({ error: 'Iniciá sesión con Discord' }); }
+  } catch (e) {
+    if (e.banned) return res.status(403).json({ error: 'Tu cuenta fue baneada' });
+    res.status(401).json({ error: 'Iniciá sesión con Discord' });
+  }
 }
 function ownScript(req, res, next) {
   const s = db.prepare('select * from scripts where id=? and user_id=?').get(Number(req.params.id), req.user.id);
@@ -134,6 +140,7 @@ app.post('/api/login', (req, res) => {
   const { email, password } = req.body || {};
   const u = db.prepare('select id, pass from users where email=?').get(String(email || '').trim().toLowerCase());
   if (!u || !u.pass || typeof password !== 'string' || !verifyPass(password, u.pass)) return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+  if (db.prepare('select banned from users where id=?').get(u.id).banned) return res.status(403).json({ error: 'Tu cuenta fue baneada' });
   setSess(req, res, u.id);
   res.json({ ok: 1 });
 });
@@ -158,6 +165,7 @@ app.get('/api/scripts', auth, (req, res) => {
   }));
 });
 app.post('/api/scripts', auth, (req, res) => {
+  if (req.user.blacklisted) return res.status(403).json({ error: 'Tu cuenta está en blacklist y no puede crear scripts' });
   const { name, content, free } = req.body || {};
   const count = db.prepare('select count(*) c from scripts where user_id=?').get(req.user.id).c;
   const max = C.maxScripts(req.user);
@@ -207,6 +215,7 @@ app.delete('/api/keys/:kid', auth, (req, res) => {
 
 // ---------- Canjear llave de plan ----------
 app.post('/api/plan/redeem', auth, (req, res) => {
+  if (req.user.blacklisted) return res.status(403).json({ error: 'Tu cuenta está en blacklist' });
   const code = String((req.body || {}).code || '').trim();
   if (!code.startsWith('PREMIUM_') && !code.startsWith('PLUS_')) return res.status(400).json({ error: 'Formato de llave inválido' });
   const k = db.prepare('select * from plan_keys where k=? and used_by is null').get(code);
@@ -260,6 +269,29 @@ app.post('/api/admin/users/:id/plan', auth, adminOnly, (req, res) => {
   const plan = (req.body || {}).plan;
   if (!['free', 'premium', 'plus'].includes(plan)) return res.status(400).json({ error: 'Plan inválido' });
   db.prepare('update users set plan=?, plan_expires=null where id=?').run(plan, Number(req.params.id));
+  res.json({ ok: 1 });
+});
+app.get('/api/admin/users', auth, adminOnly, (req, res) => {
+  const q = String((req.query || {}).q || '').trim().slice(0, 64);
+  const like = `%${q}%`;
+  const rows = q
+    ? db.prepare(`select id,username,discord_id,email,plan,plan_expires,banned,blacklisted,created from users
+        where username like ? or discord_id like ? or cast(id as text) = ? order by id desc limit 100`).all(like, like, q)
+    : db.prepare('select id,username,discord_id,email,plan,plan_expires,banned,blacklisted,created from users order by id desc limit 100').all();
+  res.json(rows);
+});
+app.post('/api/admin/users/:id/ban', auth, adminOnly, (req, res) => {
+  const t = db.prepare('select * from users where id=?').get(Number(req.params.id));
+  if (!t) return res.status(404).json({ error: 'No existe' });
+  if (C.isAdminUser(t)) return res.status(400).json({ error: 'No podés banear a un admin' });
+  db.prepare('update users set banned=? where id=?').run((req.body || {}).value ? 1 : 0, t.id);
+  res.json({ ok: 1 });
+});
+app.post('/api/admin/users/:id/blacklist', auth, adminOnly, (req, res) => {
+  const t = db.prepare('select * from users where id=?').get(Number(req.params.id));
+  if (!t) return res.status(404).json({ error: 'No existe' });
+  if (C.isAdminUser(t)) return res.status(400).json({ error: 'No podés poner en blacklist a un admin' });
+  db.prepare('update users set blacklisted=? where id=?').run((req.body || {}).value ? 1 : 0, t.id);
   res.json({ ok: 1 });
 });
 app.patch('/api/admin/scripts/:id', auth, adminOnly, (req, res) => {
