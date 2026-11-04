@@ -307,6 +307,8 @@ function openNew() {
     <label>Lua code</label><textarea id="ct" placeholder="-- paste your script"></textarea>
     <label>Or upload a file (.lua or .txt)</label><input type="file" id="fu" accept=".lua,.txt,text/plain">
     <label style="display:flex;gap:8px;align-items:center;color:var(--tx)"><input type="checkbox" id="fr" style="width:auto;margin:0"> Free (no key required)</label>
+    <label>Discord webhook (optional)</label><input id="wh" placeholder="https://discord.com/api/webhooks/...">
+    <label style="display:flex;gap:8px;align-items:center;color:var(--tx)"><input type="checkbox" id="won" style="width:auto;margin:0"> Send a message when someone executes it</label>
     <div class="da"><button class="btn sm" onclick="closeDlg()">Cancel</button><button class="btn sm pri" id="go">Create</button></div>`);
   $('#fu').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -318,7 +320,7 @@ function openNew() {
     r.readAsText(f);
   };
   $('#go').onclick = async () => {
-    try { await api('/api/scripts', { m: 'POST', b: { name: $('#nm').value, content: $('#ct').value, free: $('#fr').checked } }); closeDlg(); toast('Script created'); await refresh(); }
+    try { await api('/api/scripts', { m: 'POST', b: { name: $('#nm').value, content: $('#ct').value, free: $('#fr').checked, webhook_url: $('#wh').value.trim(), webhook_on: $('#won').checked } }); closeDlg(); toast('Script created'); await refresh(); }
     catch (e) { toast(e.message); }
   };
 }
@@ -349,9 +351,11 @@ function openSettings(id) {
   openDlg(`<h3>Settings</h3><small>Changes apply right away.</small>
     <label>Days before HWID can be reset (1-365)</label><input id="hd" type="number" min="1" max="365" value="${s ? s.hwid_days : 7}">
     <label>Buyer role ID</label><input id="br" placeholder="Right-click the role > Copy ID" value="${s && s.buyer_role_id ? esc(s.buyer_role_id) : ''}">
+    <label>Discord webhook (execution logs)</label><input id="wh" placeholder="https://discord.com/api/webhooks/..." value="${s && s.webhook_url ? esc(s.webhook_url) : ''}">
+    <label style="display:flex;gap:8px;align-items:center;color:var(--tx)"><input type="checkbox" id="won" ${s && s.webhook_on ? 'checked' : ''} style="width:auto;margin:0"> Send a message when someone executes it</label>
     <div class="da"><button class="btn sm" onclick="closeDlg()">Close</button><button class="btn sm pri" id="sv">Save</button></div>`);
   $('#sv').onclick = async () => {
-    try { await api(`/api/scripts/${id}`, { m: 'PATCH', b: { hwid_days: $('#hd').value, buyer_role_id: $('#br').value.trim() } }); closeDlg(); toast('Saved'); await refresh(); }
+    try { await api(`/api/scripts/${id}`, { m: 'PATCH', b: { hwid_days: $('#hd').value, buyer_role_id: $('#br').value.trim(), webhook_url: $('#wh').value.trim(), webhook_on: $('#won').checked } }); closeDlg(); toast('Saved'); await refresh(); }
     catch (e) { toast(e.message); }
   };
 }
