@@ -25,6 +25,9 @@ const reply = (i, payload) => {
 };
 const say = (i, content) => reply(i, { content });
 const sayE = (i, embeds) => reply(i, { embeds });
+const errEmbed = (text) => new EmbedBuilder().setColor(0xed4245).setTitle('ERROR').setDescription(text);
+// Respuesta de canje: texto normal, o embed rojo si es un error marcado con { error }.
+const redeemReply = (i, r) => (typeof r === 'object' && r && r.error ? sayE(i, [errEmbed(r.error)]) : say(i, typeof r === 'object' ? r.ok : r));
 
 const n = (x) => Number(x || 0).toLocaleString('en-US');
 const fmtDate = (t) => (t ? new Date(t).toUTCString() : 'Never');
@@ -77,18 +80,18 @@ async function redeemKey(member, uid, raw) {
   const s = db.prepare('select * from scripts where id=?').get(k.script_id);
   if (!s || !s.enabled) return 'This script is currently paused or no longer exists.';
   if (k.blacklisted) return 'This key has been disabled.';
-  if (C.expired(k)) return 'This key has expired.';
-  if (k.owner_discord_id && k.owner_discord_id !== uid) return 'This key is already linked to another account.';
+  if (C.expired(k)) return { error: 'this key expired' };
+  if (k.owner_discord_id && k.owner_discord_id !== uid) return { error: 'this key has already been claimed by someone else' };
   if (!member) return "I couldn't read your server profile. Try again in a moment.";
   if (blocked(s, uid, member)) return 'Your account is blocked on this script.';
   // Atomic claim: only succeeds if nobody else took the key in the meantime.
   const claimed = db.prepare('update lkeys set owner_discord_id=? where id=? and (owner_discord_id is null or owner_discord_id=?)').run(uid, k.id, uid);
-  if (!claimed.changes) return 'This key is already linked to another account.';
+  if (!claimed.changes) return { error: 'this key has already been claimed by someone else' };
   const name = s.name || s.slug;
-  if (!s.buyer_role_id) return `Key redeemed on **${name}**, but no buyer role is set yet. Ask the owner to set it.`;
+  if (!s.buyer_role_id) return { ok: `Key redeemed on **${name}**, but no buyer role is set yet. Ask the owner to set it.` };
   try { await member.roles.add(s.buyer_role_id); }
-  catch (e) { console.error('[role]', e.message); return `Key redeemed on **${name}**, but I couldn't give you the buyer role. Ask an admin to check my role permissions.`; }
-  return `Key redeemed on **${name}**. You now have the buyer role.`;
+  catch (e) { console.error('[role]', e.message); return { ok: `Key redeemed on **${name}**, but I couldn't give you the buyer role. Ask an admin to check my role permissions.` }; }
+  return { ok: `Key redeemed on **${name}**. You now have the buyer role.` };
 }
 
 // ---------- Commands ----------
@@ -249,7 +252,7 @@ async function onCommand(i) {
   const cmd = i.commandName;
   await defer(i);
 
-  if (cmd === 'redeem') return say(i, await redeemKey(i.member, i.user.id, i.options.getString('key')));
+  if (cmd === 'redeem') return redeemReply(i, await redeemKey(i.member, i.user.id, i.options.getString('key')));
 
   if (cmd === 'myscripts') {
     const rows = db.prepare('select s.* from scripts s join users u on u.id=s.user_id where u.discord_id=? order by s.id').all(i.user.id);
@@ -345,7 +348,8 @@ async function onCommand(i) {
       console.error('[panel] could not post:', e.message);
       return say(i, "I couldn't post the panel there. Check that I can see and send messages in that channel.");
     }
-    return say(i, `Panel for **${s.name || s.slug}** posted in <#${channel.id}>.`);
+    const warn = s.buyer_role_id ? '' : '\n⚠️ Assign a role to this panel first: use /getrole.';
+    return say(i, `Panel for **${s.name || s.slug}** posted in <#${channel.id}>.${warn}`);
   }
 
   if (cmd === 'delpanel') {
@@ -403,7 +407,7 @@ async function onButton(i) {
 async function onModal(i) {
   await defer(i);
   const r = await redeemKey(i.member, i.user.id, i.fields.getTextInputValue('key'));
-  return say(i, r);
+  return redeemReply(i, r);
 }
 
 // ---------- Client ----------
@@ -450,7 +454,8 @@ client.on('messageCreate', async (msg) => {
   if (msg.author.bot || !msg.guild || !msg.content.toLowerCase().startsWith('.redeem ')) return;
   const member = msg.member || (await msg.guild.members.fetch(msg.author.id).catch(() => null));
   const r = await redeemKey(member, msg.author.id, msg.content.slice(8));
-  msg.reply({ content: r, allowedMentions: { repliedUser: false } }).catch(() => {});
+  const out = typeof r === 'object' && r && r.error ? { embeds: [errEmbed(r.error)] } : { content: typeof r === 'object' ? r.ok : r };
+  msg.reply({ ...out, allowedMentions: { repliedUser: false } }).catch(() => {});
 });
 
 function start() {
