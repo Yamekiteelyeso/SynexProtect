@@ -17,7 +17,27 @@ const CID = process.env.DISCORD_CLIENT_ID || '';
 const CSEC = process.env.DISCORD_CLIENT_SECRET || '';
 const BASE_ENV = (process.env.BASE_URL || '').replace(/\/$/, '');
 const RAIL = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
-const base = (req) => BASE_ENV || RAIL || `${req.protocol}://${req.get('host')}`;
+const hashPass = (p) => { const salt = crypto.randomBytes(16).toString('hex'); return salt + ':' + crypto.scryptSync(p, salt, 64).toString('hex'); };
+const verifyPass = (p, stored) => {
+  const [salt, hex] = String(stored || '').split(':');
+  if (!salt || !hex) return false;
+  const k = crypto.scryptSync(p, salt, 64), e = Buffer.from(hex, 'hex');
+  return e.length === k.length && crypto.timingSafeEqual(k, e);
+};
+const tries = new Map();
+const limited = (req) => {
+  const now = Date.now(), a = (tries.get(req.ip) || []).filter((t) => now - t < 9e5);
+  a.push(now); tries.set(req.ip, a);
+  return a.length > 10;
+};
+const normBase = (v) => {
+  let t = String(v || '').trim();
+  if (!t) return '';
+  if (!/^https?:\/\//i.test(t)) t = 'https://' + t;
+  try { const u = new URL(t); return u.hostname.includes('.') || u.hostname === 'localhost' ? u.origin : ''; } catch { return ''; }
+};
+const base = (req) => normBase(process.env.BASE_URL) || normBase(process.env.RAILWAY_PUBLIC_DOMAIN) || `${req.protocol}://${req.get('host')}`;
+console.log('[oauth] base URL:', base({ protocol: 'https', get: () => '' }) || '(se toma de la petición)');
 
 function setSess(req, res, id) {
   const t = jwt.sign({ id }, SECRET, { expiresIn: '30d' });
@@ -42,6 +62,8 @@ function ownScript(req, res, next) {
 app.get('/auth/discord', (req, res) => {
   const st = crypto.randomBytes(16).toString('hex');
   res.cookie('sxs', st, { httpOnly: true, sameSite: 'lax', maxAge: 6e5 });
+  if (req.query.link === '1') res.cookie('sxl', '1', { httpOnly: true, sameSite: 'lax', maxAge: 6e5 });
+  res.cookie('sxm', req.query.mode === 'register' ? 'register' : 'login', { httpOnly: true, sameSite: 'lax', maxAge: 6e5 });
   const u = new URL('https://discord.com/oauth2/authorize');
   u.search = new URLSearchParams({ client_id: CID, response_type: 'code', redirect_uri: `${base(req)}/auth/discord/callback`, scope: 'identify', state: st }).toString();
   res.redirect(u.toString());
@@ -57,6 +79,18 @@ app.get('/auth/discord/callback', async (req, res) => {
     if (!t.access_token) return res.redirect('/?e=token');
     const d = await (await fetch('https://discord.com/api/users/@me', { headers: { Authorization: 'Bearer ' + t.access_token } })).json();
     if (!d.id) return res.redirect('/?e=perfil');
+    if (req.cookies.sxl) {
+      res.clearCookie('sxl');
+      let uid = null;
+      try { uid = jwt.verify(req.cookies.sx || '', SECRET).id; } catch {}
+      if (!uid) return res.redirect('/?e=state');
+      if (db.prepare('select id from users where discord_id=? and id<>?').get(d.id, uid)) return res.redirect('/?e=linked');
+      db.prepare('update users set discord_id=? where id=?').run(d.id, uid);
+      return res.redirect('/');
+    }
+    const mode = req.cookies.sxm === 'register' ? 'register' : 'login';
+    res.clearCookie('sxm');
+    if (mode === 'login' && !db.prepare('select 1 from users where discord_id=?').get(d.id)) return res.redirect('/?e=noacct');
     db.prepare('insert into users(discord_id,username,plan,created) values(?,?,?,?) on conflict(discord_id) do update set username=excluded.username')
       .run(d.id, d.username, 'free', Date.now());
     const u = db.prepare('select id from users where discord_id=?').get(d.id);
@@ -64,13 +98,33 @@ app.get('/auth/discord/callback', async (req, res) => {
     res.redirect('/');
   } catch (e) { console.error('[oauth]', e); res.redirect('/?e=oauth'); }
 });
+app.post('/api/register', (req, res) => {
+  if (limited(req)) return res.status(429).json({ error: 'Demasiados intentos, esperá unos minutos' });
+  const { username, email, password } = req.body || {};
+  const un = String(username || '').trim(), em = String(email || '').trim().toLowerCase();
+  if (!/^[A-Za-z0-9_]{3,20}$/.test(un)) return res.status(400).json({ error: 'Usuario: 3-20 letras, números o _' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return res.status(400).json({ error: 'Correo inválido' });
+  if (typeof password !== 'string' || password.length < 8 || password.length > 72) return res.status(400).json({ error: 'La contraseña debe tener 8-72 caracteres' });
+  if (db.prepare('select 1 from users where email=?').get(em)) return res.status(409).json({ error: 'Ese correo ya está registrado' });
+  const r = db.prepare('insert into users(username,email,pass,plan,created) values(?,?,?,?,?)').run(un, em, hashPass(password), 'free', Date.now());
+  setSess(req, res, Number(r.lastInsertRowid));
+  res.json({ ok: 1 });
+});
+app.post('/api/login', (req, res) => {
+  if (limited(req)) return res.status(429).json({ error: 'Demasiados intentos, esperá unos minutos' });
+  const { email, password } = req.body || {};
+  const u = db.prepare('select id, pass from users where email=?').get(String(email || '').trim().toLowerCase());
+  if (!u || !u.pass || typeof password !== 'string' || !verifyPass(password, u.pass)) return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+  setSess(req, res, u.id);
+  res.json({ ok: 1 });
+});
 app.post('/api/logout', (req, res) => { res.clearCookie('sx'); res.json({ ok: 1 }); });
 
 // ---------- API del panel web ----------
 app.get('/api/me', auth, (req, res) => {
   const max = C.maxScripts(req.user);
   res.json({
-    username: req.user.username, admin: !!req.user.admin, plan: req.user.plan,
+    username: req.user.username, email: req.user.email || null, discord: !!req.user.discord_id, admin: !!req.user.admin, plan: req.user.plan,
     max: max === Infinity ? null : max,
     invite: `https://discord.com/oauth2/authorize?client_id=${CID}&scope=bot+applications.commands&permissions=8`,
   });
