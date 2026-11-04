@@ -1,36 +1,256 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Synex Protect</title>
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
 <style>
-body{font-family:system-ui,sans-serif;background:#0d0a12;color:#eee;margin:0;padding:20px;max-width:900px;margin:auto}
-h1{color:#f5a524}.card{background:#171221;border:1px solid #2c2340;border-radius:12px;padding:14px;margin:12px 0}
-button,a.btn{background:#f5a524;color:#111;border:0;border-radius:8px;padding:7px 12px;margin:3px;cursor:pointer;font-weight:600;text-decoration:none;display:inline-block}
-button.ghost{background:#2c2340;color:#eee}textarea,input{width:100%;box-sizing:border-box;background:#0d0a12;color:#eee;border:1px solid #2c2340;border-radius:8px;padding:8px;margin:6px 0}
-code{background:#0d0a12;padding:6px;display:block;border-radius:8px;overflow-x:auto;white-space:pre;color:#8ee0a0}
-small{color:#a89bc2}[hidden]{display:none!important}
-</style></head><body>
-<h1>Synex Protect</h1>
-<section id="login" hidden><div class="card"><p>Iniciá sesión con Discord para registrar tus scripts y usar el bot.</p><a class="btn" href="/auth/discord">Entrar con Discord</a></div></section>
-<section id="app" hidden>
-  <div class="card"><b id="who"></b><br><small>Para que el bot registre tus scripts, invitalo a tu servidor con el botón.</small><br><a class="btn" id="invite" target="_blank" rel="noopener">Añadir el bot a mi Discord</a> <button class="ghost" onclick="logout()">Salir</button></div>
-  <div class="card"><h3>Nuevo script</h3><input id="nm" placeholder="nombre-del-link (3-24)" maxlength="24"><textarea id="ct" rows="8" placeholder="-- pegá tu script Lua"></textarea><label><input type="checkbox" id="fr" style="width:auto"> Gratis (no pide key)</label><br><button onclick="create()">Crear script</button></div>
-  <div id="list"></div>
+:root{--bg:#060606;--panel:#0f0f0f;--card:#141414;--line:#252525;--tx:#f0f0f0;--mu:#8c8c8c;--ac:#eaeaea;--ok:#9be3b1;--er:#ff8a8a}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--tx);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px}
+a{color:inherit}button{font:inherit;cursor:pointer}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--line);background:#1a1a1a;color:var(--tx);border-radius:10px;padding:10px 14px;font-weight:600;text-decoration:none;transition:.15s;width:100%}
+.btn:hover{background:#242424;border-color:#3a3a3a}.btn.pri{background:var(--ac);color:#0a0a0a;border-color:var(--ac)}.btn.pri:hover{background:#fff}
+.btn.sm{width:auto;padding:6px 10px;font-size:13px;font-weight:500}.btn.dng{color:var(--er)}
+input,textarea,select{width:100%;background:#0b0b0b;color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:inherit;outline:none;margin-top:8px}
+input:focus,textarea:focus{border-color:#555}textarea{font-family:ui-monospace,Consolas,monospace;font-size:13px;min-height:180px;resize:vertical}
+label{display:block;color:var(--mu);font-size:13px;margin:12px 0 0}
+small,.mu{color:var(--mu);font-size:13px}
+[hidden]{display:none!important}
+.logo{width:44px;height:44px;flex:none}
+.err{margin-top:12px;color:var(--er);font-size:13px;min-height:1em}
+.or{display:flex;align-items:center;gap:10px;color:var(--mu);font-size:12px;margin:18px 0}.or:before,.or:after{content:'';flex:1;height:1px;background:var(--line)}
+.sw{color:var(--mu);font-size:13px;margin:20px 0 10px;text-align:center}
+/* auth: brand left, form right */
+.auth{min-height:100vh;display:grid;grid-template-columns:1.1fr .9fr}
+.btn.dc{background:#5865F2;border-color:#5865F2;color:#fff;gap:10px}.btn.dc:hover{background:#4752c4;border-color:#4752c4}
+.hero{padding:56px 6vw;display:flex;flex-direction:column;justify-content:center;gap:22px;background:radial-gradient(700px 420px at 0% 0%,#1c1c1c,transparent),#070707;border-right:1px solid var(--line)}
+.hero .brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:20px;letter-spacing:.3px}
+.hero h1{margin:0;font-size:clamp(30px,3.6vw,46px);line-height:1.1;letter-spacing:-.5px}
+.hero p{color:var(--mu);margin:0;max-width:480px;line-height:1.6}
+.feat{display:flex;gap:18px;flex-wrap:wrap;color:var(--mu);font-size:13px}.feat span:before{content:'✓ ';color:var(--ok)}
+.snip{background:#0b0b0b;border:1px solid var(--line);border-radius:14px;padding:16px;font:13px/1.6 ui-monospace,Consolas,monospace;color:#bdf5cc;max-width:560px;overflow-x:auto;white-space:pre}
+.snip em{color:#777;font-style:normal}
+.side{display:flex;align-items:center;justify-content:center;padding:40px 24px}
+.box{width:min(400px,100%);background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:30px 28px}
+.box h2{margin:0 0 4px;font-size:22px}.box > p{color:var(--mu);margin:0 0 18px;font-size:14px}
+@media (max-width:860px){.hero{padding:40px 4vw}.side{padding:28px 16px}}
+@media (max-width:640px){.auth{grid-template-columns:1fr 1fr}.hero{padding:26px 12px;gap:12px}.hero .brand{font-size:14px;gap:8px}.hero .logo{width:30px;height:30px}.hero h1{font-size:19px;line-height:1.15}.hero p{font-size:12px;line-height:1.45}.feat{display:none}.snip{font-size:9.5px;padding:8px;white-space:pre-wrap;word-break:break-all}.side{padding:14px 8px}.box{padding:18px 14px;border-radius:14px}.box h2{font-size:17px}.box > p{font-size:12px}.box input{font-size:14px;padding:9px 10px}.btn{padding:9px 10px;font-size:13px}.or{margin:12px 0}.sw{margin:12px 0 8px}}
+/* app */
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:12px 22px;background:rgba(6,6,6,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.brand-s{display:flex;align-items:center;gap:10px;font-weight:800}
+.top .sp,.sp{flex:1}.pill{border:1px solid var(--line);border-radius:999px;padding:5px 11px;color:var(--mu);font-size:13px}
+main{max-width:1080px;margin:0 auto;padding:26px 22px 60px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;margin-bottom:22px}.head h2{margin:0;font-size:22px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}.stat b{display:block;font-size:22px;margin-top:4px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px}
+.card .row{display:flex;align-items:center;gap:8px}.card h3{margin:0;font-size:17px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:3px 8px;color:var(--mu);white-space:nowrap}
+.tag.on{color:var(--ok);border-color:#2d4a37}.tag.off{color:var(--er);border-color:#4a2d2d}
+.mini{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.mini div{background:#0b0b0b;border:1px solid var(--line);border-radius:10px;padding:8px 10px}.mini b{display:block;font-size:16px}
+.acts{display:flex;flex-wrap:wrap;gap:6px}
+.code{background:#0a0a0a;border:1px solid var(--line);border-radius:10px;padding:10px;font:12.5px/1.5 ui-monospace,Consolas,monospace;color:#bdf5cc;white-space:pre-wrap;word-break:break-all;margin:0}
+.panel{background:#0b0b0b;border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:10px}
+.keyrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:8px;font-size:13px}.keyrow code{background:#0a0a0a;padding:4px 8px;border-radius:7px;color:#ddd;word-break:break-all}
+.bars{display:flex;align-items:flex-end;gap:4px;height:90px}.bars div{flex:1;background:#ddd;border-radius:4px 4px 0 0;min-height:2px;opacity:.85}
+.empty{border:1px dashed var(--line);border-radius:16px;padding:40px;text-align:center;color:var(--mu)}
+dialog{background:var(--panel);color:var(--tx);border:1px solid var(--line);border-radius:18px;padding:24px;width:min(560px,94vw)}dialog::backdrop{background:rgba(0,0,0,.7)}
+dialog h3{margin:0 0 6px}.da{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#fff;color:#000;padding:10px 16px;border-radius:12px;font-weight:600;z-index:99}
+</style></head>
+<body>
+
+<section id="auth" class="auth" hidden>
+  <div class="hero">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#9a9a9a"/></linearGradient></defs><rect x="2" y="2" width="60" height="60" rx="16" fill="#0b0b0b" stroke="#2a2a2a" stroke-width="2"/><path d="M32 10 L49 16 V30 C49 41 42 50 32 54 C22 50 15 41 15 30 V16 Z" fill="url(#g)"/><path d="M39 24 C37 21 27 21 27 27 C27 33 39 31 39 38 C39 44 28 44 25 40" fill="none" stroke="#0b0b0b" stroke-width="4.5" stroke-linecap="round"/></svg>
+      Synex Protect
+    </div>
+    <h1>Host your scripts.<br>Fast, free and secure.</h1>
+    <p>Upload your Lua script, copy the loadstring and run it in any executor. Keys, HWID locks and a Discord bot included.</p>
+    <div class="snip"><em>-- your loader, ready to paste</em>
+script_key="YOUR_KEY";
+loadstring(game:HttpGet("https://synex.app/files/v1/loaders/my-script.lua"))()</div>
+    <div class="feat"><span>Free plan</span><span>Encrypted delivery</span><span>Keys &amp; HWID lock</span><span>Discord bot</span></div>
+  </div>
+
+  <div class="side">
+    <div class="box" id="scr-login">
+      <h2>Sign in</h2>
+      <p>Welcome back. Sign in to manage your scripts.</p>
+      <a class="btn dc" href="/auth/discord?mode=login"><svg viewBox="0 0 24 24" width="20" height="20" fill="#fff" aria-hidden="true"><path d="M20.317 4.37a19.79 19.79 0 00-4.885-1.515.074.074 0 00-.079.037c-.211.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.74 19.74 0 003.677 4.37a.07.07 0 00-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 00.031.056c2.053 1.508 4.041 2.423 5.993 3.03a.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.1 13.1 0 01-1.872-.892.077.077 0 01-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 01.078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.079.009c.12.099.246.198.373.292a.077.077 0 01-.006.127 12.3 12.3 0 01-1.873.892.076.076 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028c1.961-.607 3.95-1.522 6.003-3.03a.077.077 0 00.031-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.029zM8.02 15.331c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.332-.947 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.332-.946 2.418-2.157 2.418z"/></svg><span>Sign in with Discord</span></a>
+      <div class="or">or with email</div>
+      <form id="fl">
+        <label for="le">Email</label><input id="le" type="email" autocomplete="email" required>
+        <label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required>
+        <button class="btn pri" style="margin-top:14px">Sign in</button>
+      </form>
+      <div class="sw">Don't have an account?</div>
+      <button class="btn" onclick="show('reg')">Create account</button>
+      <div class="err" id="err1"></div>
+    </div>
+
+    <div class="box" id="scr-reg" hidden>
+      <h2>Create account</h2>
+      <p>Free to start. No credit card needed.</p>
+      <a class="btn dc" href="/auth/discord?mode=register"><svg viewBox="0 0 24 24" width="20" height="20" fill="#fff" aria-hidden="true"><path d="M20.317 4.37a19.79 19.79 0 00-4.885-1.515.074.074 0 00-.079.037c-.211.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.74 19.74 0 003.677 4.37a.07.07 0 00-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 00.031.056c2.053 1.508 4.041 2.423 5.993 3.03a.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.1 13.1 0 01-1.872-.892.077.077 0 01-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 01.078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.079.009c.12.099.246.198.373.292a.077.077 0 01-.006.127 12.3 12.3 0 01-1.873.892.076.076 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028c1.961-.607 3.95-1.522 6.003-3.03a.077.077 0 00.031-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.029zM8.02 15.331c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.332-.947 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.332-.946 2.418-2.157 2.418z"/></svg><span>Sign in with Discord</span></a>
+      <div class="or">or with email</div>
+      <form id="fr2">
+        <label for="ru">Username</label><input id="ru" placeholder="3-20 letters, numbers or _" autocomplete="username" required>
+        <label for="re">Email</label><input id="re" type="email" autocomplete="email" required>
+        <label for="rp">Password</label><input id="rp" type="password" placeholder="At least 8 characters" autocomplete="new-password" required>
+        <button class="btn pri" style="margin-top:14px">Create account</button>
+      </form>
+      <div class="sw">Already have an account?</div>
+      <button class="btn" onclick="show('login')">Sign in</button>
+      <div class="err" id="err2"></div>
+    </div>
+  </div>
 </section>
+
+<section id="app" hidden>
+  <header class="top">
+    <div class="brand-s"><svg class="logo" style="width:30px;height:30px" viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="16" fill="#0b0b0b" stroke="#2a2a2a" stroke-width="2"/><path d="M32 10 L49 16 V30 C49 41 42 50 32 54 C22 50 15 41 15 30 V16 Z" fill="#eaeaea"/><path d="M39 24 C37 21 27 21 27 27 C27 33 39 31 39 38 C39 44 28 44 25 40" fill="none" stroke="#0b0b0b" stroke-width="4.5" stroke-linecap="round"/></svg>Synex Protect</div>
+    <span class="sp"></span>
+    <span class="pill" id="plan"></span>
+    <a class="btn sm" id="invite" target="_blank" rel="noopener">Add bot</a>
+    <button class="btn sm" onclick="logout()">Log out</button>
+  </header>
+  <main>
+    <div id="banner"></div>
+    <div class="head">
+      <div><h2 id="hi"></h2><small id="sub"></small></div>
+      <span class="sp"></span>
+      <button class="btn sm pri" onclick="openNew()">+ New script</button>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="grid" id="list"></div>
+  </main>
+</section>
+
+<dialog id="dlg"></dialog>
+<div class="toast" id="toast" hidden></div>
+
 <script>
-const $=(s)=>document.querySelector(s), esc=(s)=>String(s??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-async function api(p,o={}){const r=await fetch(p,{method:o.m||'GET',headers:{'Content-Type':'application/json'},body:o.b?JSON.stringify(o.b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Error');return j;}
-async function boot(){try{const me=await api('/api/me');$('#who').textContent='@'+me.username+' · '+(me.admin?'Admin':me.plan)+' · '+(me.max==null?'scripts ilimitados':'máx. '+me.max+' scripts');$('#invite').href=me.invite;$('#login').hidden=true;$('#app').hidden=false;await list();}catch(e){$('#login').hidden=false;}}
-async function list(){const s=await api('/api/scripts');$('#list').innerHTML=s.map(x=>`<div class="card"><b>${esc(x.slug)}</b> <small>hoy ${x.d1} · 7d ${x.d7} · 30d ${x.d30} · ${x.keys} keys · HWID cada ${x.hwid_days} días · ${x.free?'gratis':'con key'} · ${x.enabled?'activo':'pausado'}</small><div><button onclick="copy('${esc(x.loadstring).replace(/\n/g,'\\n')}')">Copiar loadstring</button><button class="ghost" onclick="keys(${x.id})">Keys</button><button class="ghost" onclick="stats(${x.id})">Estadísticas</button><button class="ghost" onclick="gen(${x.id})">+ Keys</button><button class="ghost" onclick="tog(${x.id},${!x.enabled})">${x.enabled?'Pausar':'Activar'}</button><button class="ghost" onclick="free(${x.id},${!x.free})">${x.free?'Hacer con key':'Hacer gratis'}</button><button class="ghost" onclick="hw(${x.id})">Días HWID</button><button class="ghost" onclick="role(${x.id})">Rol comprador</button><button class="ghost" onclick="del(${x.id})">Borrar</button></div><pre><code>${esc(x.loadstring)}</code></pre><div id="k${x.id}"></div></div>`).join('')||'<p>Todavía no tenés scripts.</p>';}
-async function create(){try{await api('/api/scripts',{m:'POST',b:{name:$('#nm').value,content:$('#ct').value,free:$('#fr').checked}});$('#nm').value='';$('#ct').value='';await list();}catch(e){alert(e.message);}}
-async function keys(id){const k=await api(`/api/scripts/${id}/keys`);$('#k'+id).innerHTML=k.map(x=>`<div><code>${esc(x.k)}</code><small>${x.owner_discord_id?'canjeada por '+esc(x.owner_discord_id):'libre'} · ${x.uses} usos · ${x.blacklisted?'desactivada':''}</small></div>`).join('')||'<small>Sin keys</small>';}
-async function stats(id){const st=await api(`/api/scripts/${id}/stats`);const m=Math.max(1,...st.days);$('#k'+id).innerHTML='<div style="display:flex;align-items:flex-end;height:70px;gap:3px">'+st.days.map((v)=>`<div title="${v}" style="flex:1;background:#f5a524;height:${Math.max(2,Math.round(v/m*70))}px"></div>`).join('')+'</div><small>Últimos 14 días · hoy '+st.d1+' · 7d '+st.d7+' · 30d '+st.d30+' · total '+st.total+'</small>';}
-async function gen(id){const d=prompt('Días de validez (vacío = de por vida)','');const c=prompt('Cantidad (1-50)','1');try{await api(`/api/scripts/${id}/keys`,{m:'POST',b:{days:d||null,count:c||1}});await keys(id);}catch(e){alert(e.message);}}
-async function tog(id,v){await api('/api/scripts/'+id,{m:'PATCH',b:{enabled:v}});await list();}
-async function free(id,v){await api('/api/scripts/'+id,{m:'PATCH',b:{free:v}});await list();}
-async function hw(id){const d=prompt('Cada cuántos días se puede reiniciar el HWID (1-365)','7');if(d)await api('/api/scripts/'+id,{m:'PATCH',b:{hwid_days:d}});await list();}
-async function role(id){const r=prompt('ID del rol de comprador (clic derecho en el rol > Copiar ID)','');if(r!=null)await api('/api/scripts/'+id,{m:'PATCH',b:{buyer_role_id:r.trim()}});await list();}
-async function del(id){if(confirm('¿Borrar el script y sus keys? No se puede deshacer.')){await api('/api/scripts/'+id,{m:'DELETE'});await list();}}
-function copy(t){navigator.clipboard.writeText(t.replace(/\\n/g,'\n')).then(()=>alert('Loadstring copiado'),()=>alert('No pude copiar'));}
-async function logout(){await api('/api/logout',{m:'POST'});location.reload();}
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (n) => Number(n || 0).toLocaleString('en');
+const ago = (t) => { if (!t) return 'never'; const m = Math.round((Date.now() - t) / 6e4); return m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+async function api(p, o = {}) {
+  const r = await fetch(p, { method: o.m || 'GET', headers: { 'Content-Type': 'application/json' }, body: o.b ? JSON.stringify(o.b) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Something went wrong');
+  return j;
+}
+function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (el.hidden = true), 2200); }
+async function copy(t, msg = 'Copied') { try { await navigator.clipboard.writeText(t); toast(msg); } catch { toast('Could not copy'); } }
+function openDlg(html) { const d = $('#dlg'); d.innerHTML = html; if (!d.open) d.showModal(); return d; }
+const close = () => $('#dlg').close();
+
+const ERR = { noacct: 'No account is linked to this Discord yet. Create one first.', linked: 'That Discord account is already linked to another user.', state: 'Login session expired, please try again.', token: 'Discord did not return access.', perfil: 'Could not read your Discord profile.', oauth: 'Could not connect to Discord.' };
+function show(which) {
+  $('#scr-login').hidden = which !== 'login';
+  $('#scr-reg').hidden = which !== 'reg';
+  $('#err1').textContent = ''; $('#err2').textContent = '';
+}
+async function boot() {
+  const e = new URLSearchParams(location.search).get('e');
+  if (e === 'noacct') { show('reg'); $('#err2').textContent = ERR.noacct; history.replaceState(0, '', '/'); }
+  else if (e) { show('login'); $('#err1').textContent = ERR[e] || 'Could not sign in.'; history.replaceState(0, '', '/'); }
+  try {
+    const me = await api('/api/me');
+    $('#app').hidden = false; $('#invite').href = me.invite;
+    $('#hi').textContent = `Hi, ${me.username}`;
+    $('#plan').textContent = me.max == null ? 'Unlimited' : `${me.plan} plan · up to ${me.max} scripts`;
+    if (!me.discord) $('#banner').innerHTML = '<div class="panel" style="margin-bottom:18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span>Connect Discord so the bot and panels can use your scripts.</span><span style="flex:1"></span><a class="btn sm pri" href="/auth/discord?link=1">Connect Discord</a></div>';
+    await refresh();
+  } catch {
+    $('#auth').hidden = false; if (!e) show('login');
+  }
+}
+$('#fl').onsubmit = async (ev) => {
+  ev.preventDefault();
+  try { await api('/api/login', { m: 'POST', b: { email: $('#le').value, password: $('#lp').value } }); location.href = '/'; }
+  catch (err) { $('#err1').textContent = err.message; }
+};
+$('#fr2').onsubmit = async (ev) => {
+  ev.preventDefault();
+  try { await api('/api/register', { m: 'POST', b: { username: $('#ru').value, email: $('#re').value, password: $('#rp').value } }); location.href = '/'; }
+  catch (err) { $('#err2').textContent = err.message; }
+};
+async function refresh() {
+  const s = await api('/api/scripts');
+  window.__list = s;
+  const sum = (k) => s.reduce((a, x) => a + (x[k] || 0), 0);
+  $('#stats').innerHTML = [['Scripts', s.length], ['Today', sum('d1')], ['Last 7 days', sum('d7')], ['Last 30 days', sum('d30')]]
+    .map(([l, v]) => `<div class="stat"><small>${l}</small><b>${fmt(v)}</b></div>`).join('');
+  $('#sub').textContent = `${s.length} script${s.length === 1 ? '' : 's'} in your account`;
+  $('#list').innerHTML = s.length ? s.map(card).join('') : '<div class="empty" style="grid-column:1/-1">No scripts yet. Create your first one with “+ New script”.</div>';
+}
+function card(x) {
+  return `<div class="card">
+    <div class="row"><h3>${esc(x.slug)}</h3><span class="tag ${x.enabled ? 'on' : 'off'}">${x.enabled ? 'Active' : 'Paused'}</span><span class="tag">${x.free ? 'Free' : 'Key required'}</span></div>
+    <div class="mini"><div><small>Today</small><b>${fmt(x.d1)}</b></div><div><small>7 days</small><b>${fmt(x.d7)}</b></div><div><small>30 days</small><b>${fmt(x.d30)}</b></div></div>
+    <small>${fmt(x.keys)} keys · HWID reset every ${x.hwid_days} days · ${x.buyer_role_id ? 'buyer role set' : 'no buyer role'}</small>
+    <pre class="code">${esc(x.loadstring)}</pre>
+    <div class="acts">
+      <button class="btn sm pri" data-l="${esc(x.loadstring)}" onclick="copy(this.dataset.l,'Loadstring copied')">Copy loadstring</button>
+      <button class="btn sm" onclick="showKeys(${x.id})">Keys</button>
+      <button class="btn sm" onclick="showStats(${x.id})">Stats</button>
+      <button class="btn sm" onclick="openSettings(${x.id})">Settings</button>
+      <button class="btn sm dng" onclick="delScript(${x.id},'${esc(x.slug)}')">Delete</button>
+    </div>
+    <div id="p${x.id}"></div>
+  </div>`;
+}
+function openNew() {
+  openDlg(`<h3>New script</h3><small>It gets its own loadstring link.</small>
+    <label>Link name</label><input id="nm" maxlength="24" placeholder="my-script">
+    <label>Lua code</label><textarea id="ct" placeholder="-- paste your script"></textarea>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--tx)"><input type="checkbox" id="fr" style="width:auto;margin:0"> Free (no key required)</label>
+    <div class="da"><button class="btn sm" onclick="close()">Cancel</button><button class="btn sm pri" id="go">Create</button></div>`);
+  $('#go').onclick = async () => {
+    try { await api('/api/scripts', { m: 'POST', b: { name: $('#nm').value, content: $('#ct').value, free: $('#fr').checked } }); close(); toast('Script created'); await refresh(); }
+    catch (e) { toast(e.message); }
+  };
+}
+async function showKeys(id) {
+  const k = await api(`/api/scripts/${id}/keys`);
+  $('#p' + id).innerHTML = `<div class="panel">
+    <div class="acts"><button class="btn sm" onclick="genKeys(${id})">+ Generate keys</button><button class="btn sm" onclick="showKeys(${id})">Refresh</button></div>
+    ${k.length ? k.map((x) => `<div class="keyrow"><code>${esc(x.k)}</code><span class="tag ${x.owner_discord_id ? 'on' : ''}">${x.owner_discord_id ? 'redeemed' : 'free'}</span><small>${fmt(x.uses)} uses · ${ago(x.last)}${x.expires_at ? ' · expires ' + new Date(x.expires_at).toLocaleDateString('en') : ''}</small><span class="sp"></span><button class="btn sm" onclick="copy('${esc(x.k)}','Key copied')">Copy</button><button class="btn sm dng" onclick="delKey(${x.id},${id})">Delete</button></div>`).join('') : '<small>No keys yet.</small>'}
+  </div>`;
+}
+async function genKeys(id) {
+  const d = prompt('Days valid (empty = lifetime)', '');
+  if (d === null) return;
+  const c = prompt('How many (1-50)', '1');
+  if (c === null) return;
+  try { await api(`/api/scripts/${id}/keys`, { m: 'POST', b: { days: d || null, count: c || 1 } }); toast('Keys generated'); await showKeys(id); await refresh(); }
+  catch (e) { toast(e.message); }
+}
+async function delKey(kid, id) { if (!confirm('Delete this key? Whoever uses it will lose access.')) return; await api(`/api/keys/${kid}`, { m: 'DELETE' }); toast('Key deleted'); await showKeys(id); await refresh(); }
+async function showStats(id) {
+  const st = await api(`/api/scripts/${id}/stats`);
+  const m = Math.max(1, ...st.days);
+  $('#p' + id).innerHTML = `<div class="panel"><small>Last 14 days</small><div class="bars">${st.days.map((v) => `<div title="${v}" style="height:${Math.max(2, Math.round((v / m) * 90))}px"></div>`).join('')}</div>
+    <small>Today ${fmt(st.d1)} · 7 days ${fmt(st.d7)} · 30 days ${fmt(st.d30)} · total ${fmt(st.total)}</small></div>`;
+}
+function openSettings(id) {
+  const s = (window.__list || []).find((x) => x.id === id);
+  openDlg(`<h3>Settings</h3><small>Changes apply right away.</small>
+    <label>Days before HWID can be reset (1-365)</label><input id="hd" type="number" min="1" max="365" value="${s ? s.hwid_days : 7}">
+    <label>Buyer role ID</label><input id="br" placeholder="Right-click the role > Copy ID" value="${s && s.buyer_role_id ? esc(s.buyer_role_id) : ''}">
+    <div class="da"><button class="btn sm" onclick="close()">Close</button><button class="btn sm pri" id="sv">Save</button></div>`);
+  $('#sv').onclick = async () => {
+    try { await api(`/api/scripts/${id}`, { m: 'PATCH', b: { hwid_days: $('#hd').value, buyer_role_id: $('#br').value.trim() } }); close(); toast('Saved'); await refresh(); }
+    catch (e) { toast(e.message); }
+  };
+}
+async function delScript(id, slug) {
+  if (!confirm(`Delete “${slug}”? Its keys and stats will be removed. This can't be undone.`)) return;
+  try { await api(`/api/scripts/${id}`, { m: 'DELETE' }); toast('Script deleted'); await refresh(); } catch (e) { toast(e.message); }
+}
+async function logout() { await api('/api/logout', { m: 'POST' }).catch(() => {}); location.href = '/'; }
 boot();
-</script></body></html>
+</script>
+</body></html>
