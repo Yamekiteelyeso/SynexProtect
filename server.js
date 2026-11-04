@@ -15,7 +15,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 const SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const CID = process.env.DISCORD_CLIENT_ID || '';
 const CSEC = process.env.DISCORD_CLIENT_SECRET || '';
-const OWNER = process.env.OWNER_ID || '';
 const BASE_ENV = (process.env.BASE_URL || '').replace(/\/$/, '');
 const RAIL = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
 const base = (req) => BASE_ENV || RAIL || `${req.protocol}://${req.get('host')}`;
@@ -58,9 +57,8 @@ app.get('/auth/discord/callback', async (req, res) => {
     if (!t.access_token) return res.redirect('/?e=token');
     const d = await (await fetch('https://discord.com/api/users/@me', { headers: { Authorization: 'Bearer ' + t.access_token } })).json();
     if (!d.id) return res.redirect('/?e=perfil');
-    const isAdmin = d.id === OWNER ? 1 : 0;
-    db.prepare('insert into users(discord_id,username,admin,plan,created) values(?,?,?,?,?) on conflict(discord_id) do update set username=excluded.username, admin=max(admin, excluded.admin)')
-      .run(d.id, d.username, isAdmin, isAdmin ? 'pro' : 'free', Date.now());
+    db.prepare('insert into users(discord_id,username,plan,created) values(?,?,?,?) on conflict(discord_id) do update set username=excluded.username')
+      .run(d.id, d.username, 'free', Date.now());
     const u = db.prepare('select id from users where discord_id=?').get(d.id);
     setSess(req, res, u.id);
     res.redirect('/');
