@@ -131,11 +131,11 @@ function landingHtml(slug, base) {
 <title>SynexHub</title><style>
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0912;color:#f1ecfa;font-family:system-ui,sans-serif;padding:20px}
 .box{width:min(560px,100%);background:#150f20;border:1px solid #2e2347;border-radius:16px;padding:26px}
-h1{margin:0 0 4px;color:#f5a524;font-size:28px}small{color:#a89bc2}
+h1{margin:0 0 4px;color:#f0f0f0;font-size:28px}small{color:#a89bc2}
 pre{background:#0b0912;border-radius:10px;padding:14px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;color:#8ee0a0;font-size:13px}
-button{background:#f5a524;color:#111;border:0;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;width:100%}
+button{background:#1c1c1c;color:#eee;border:1px solid #3a3a3a;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;width:100%}
 </style></head><body><div class="box"><h1>SynexHub</h1><p>Copy the loader and paste it into your executor (Delta or another).</p>
-<pre id="ls">${esc(ls)}</pre><button onclick="navigator.clipboard.writeText(document.getElementById('ls').innerText).then(()=>this.textContent='¡Copiado!')">Copiar loadstring</button>
+<pre id="ls">${esc(ls)}</pre><button onclick="navigator.clipboard.writeText(document.getElementById('ls').innerText).then(()=>this.textContent='Copied!')">Copy loadstring</button>
 </div></body></html>`;
 }
 module.exports = { newHid, scriptByHid, parseDuration, runStats, landingHtml,  DAY, PLAN_MAX, newKey, slugify, maxScripts, scriptBySlug, scriptForOwner, expired, loadstring, createKeys, resetHwid, seedOf, cipher, payload, loaderLua };
