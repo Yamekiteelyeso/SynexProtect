@@ -443,8 +443,7 @@ async function onCommand(i) {
     const key = grantToUser(s.id, u.id, dur || null);
     const panel = db.prepare('select * from panels where script_id=?').get(s.id);
     const where = panel ? `<#${panel.channel_id}>` : `<#${i.channelId}>`;
-    const grayEmbed = new EmbedBuilder().setColor(0x2b2d31).setDescription(`You can access the script via this message --> ${where}`);
-    if (i.channel) await i.channel.send({ content: `<@${u.id}> You have been whitelisted!`, embeds: [grayEmbed] }).catch((e) => console.error('[wl msg]', e.message));
+    if (i.channel) await i.channel.send({ content: `<@${u.id}> You have been whitelisted!\nYou can access the script via this message --> ${where}` }).catch((e) => console.error('[wl msg]', e.message));
     let roleNote = '';
     if (s.buyer_role_id) {
       try { const m = await i.guild.members.fetch(u.id); await m.roles.add(s.buyer_role_id); }
