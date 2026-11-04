@@ -243,7 +243,7 @@ app.post('/api/admin/plankeys', auth, adminOnly, (req, res) => {
   res.json({ keys });
 });
 app.delete('/api/admin/plankeys/:id', auth, adminOnly, (req, res) => {
-  db.prepare('delete from plan_keys where id=? and used_by is null').run(Number(req.params.id));
+  db.prepare('delete from plan_keys where id=?').run(Number(req.params.id));
   res.json({ ok: 1 });
 });
 app.post('/api/admin/grant', auth, adminOnly, (req, res) => {
