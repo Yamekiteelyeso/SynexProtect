@@ -35,6 +35,18 @@ small,.mu{color:var(--mu);font-size:13px}
 .box h2{margin:0 0 4px;font-size:22px}.box > p{color:var(--mu);margin:0 0 18px;font-size:14px}
 @media (max-width:860px){.hero{padding:40px 4vw}.side{padding:28px 16px}}
 @media (max-width:640px){.auth{grid-template-columns:1fr 1fr}.hero{padding:26px 12px;gap:12px}.hero .brand{font-size:14px;gap:8px}.hero .logo{width:30px;height:30px}.hero h1{font-size:19px;line-height:1.15}.hero p{font-size:12px;line-height:1.45}.feat{display:none}.snip{font-size:9.5px;padding:8px;white-space:pre-wrap;word-break:break-all}.side{padding:14px 8px}.box{padding:18px 14px;border-radius:14px}.box h2{font-size:17px}.box > p{font-size:12px}.box input{font-size:14px;padding:9px 10px}.btn{padding:9px 10px;font-size:13px}.or{margin:12px 0}.sw{margin:12px 0 8px}}
+@media (max-width:640px){
+  .auth{grid-template-columns:1fr!important;min-height:auto}
+  .hero{padding:18px 14px;gap:8px;border-right:0;border-bottom:1px solid var(--line)}
+  .hero h1{font-size:16px!important}
+  .hero p{font-size:11px!important}
+  .side{padding:14px 10px}
+  .box{width:100%;padding:16px 14px}
+  .box h2{font-size:17px}
+  .box > p{font-size:12px;margin-bottom:12px}
+  .box input,.box button{font-size:13px!important;padding:8px 10px!important}
+  .box label,.box small{font-size:11px}
+}
 /* app */
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:12px 22px;background:rgba(6,6,6,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .brand-s{display:flex;align-items:center;gap:10px;font-weight:800}
@@ -90,7 +102,6 @@ dialog h3{margin:0 0 6px}.da{display:flex;gap:8px;justify-content:flex-end;margi
 .dc-card b{font-size:17px;display:block}.dc-card small{opacity:.85}
 .dc-card .dc-btn{background:#fff;color:#4752c4!important}.dc-card .dc-btn:hover{background:#eef}
 .menu .dc-btn{justify-content:center;margin-top:10px}
-img,table{max-width:100%}
 @media (max-width:720px){
   .top{flex-wrap:wrap;gap:8px;padding:10px 12px}
   .top .brand-s{font-size:15px}
@@ -408,7 +419,9 @@ function renderPlans() {
     const isCurrent = cur === p.id;
     let btn = '';
     if (isCurrent) {
-      btn = `<button class="btn plan-btn" disabled style="opacity:.5;cursor:default">You already have this plan</button>`;
+      btn = `<button class="btn plan-btn" disabled style="opacity:.5;cursor:default">Tu plan actual</button>`;
+    } else if (p.id === 'free') {
+      btn = `<button class="btn plan-btn" disabled style="opacity:.5;cursor:default">Incluido en tu cuenta</button>`;
     } else {
       btn = `<button class="btn pri plan-btn" onclick="toast('Contact an admin to upgrade to ${p.name}')">Buy ${p.name}</button>`;
     }
