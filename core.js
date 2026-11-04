@@ -58,6 +58,12 @@ function loadstring(hid, base, key) {
 // ---------- Entrega cifrada ----------
 const BOT_UA = /curl|wget|python|httpie|postman|insomnia|node-fetch|axios|java|go-http|discordbot|okhttp|powershell/i;
 // Semilla: depende de la key y del nonce que manda el loader. Misma fórmula en Lua.
+// Checksum de integridad (mismo cálculo en Lua): evita que cambien el payload en tránsito.
+function csum(buf) {
+  let h = 0;
+  for (const b of buf) h = (h * 31 + b) % 2147483647;
+  return String(h).padStart(10, '0');
+}
 function seedOf(key, n) {
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 131 + key.charCodeAt(i)) % 2147483646;
@@ -76,7 +82,7 @@ function loaderLua(hid, base) {
 local SLUG = "__HID__"
 local BASE = "__BASE__"
 local KEY = tostring((getgenv and getgenv().script_key) or script_key or "")
-local BAD = {"httpspy", "simplespy", "remotespy", "hydroxide", "dumper", "envlogger"}
+local BAD = {"httpspy", "simplespy", "remotespy", "hydroxide", "dumper", "envlogger", "decompiler", "saveinstance", "luadec", "unluac", "dumpstring", "scriptdumper"}
 local flagged = false
 pcall(function()
   for name in pairs((getgenv and getgenv()) or _G) do
@@ -90,11 +96,12 @@ pcall(function() hwid = game:GetService("RbxAnalyticsService"):GetClientId() end
 if hwid == "0" then pcall(function() hwid = tostring(game:GetService("Players").LocalPlayer.UserId) end) end
 hwid = string.gsub(hwid, "[^%w_%-%.]", "")
 local n = math.random(1, 2147483640)
+local T = os.time()
 local h = 0
 for i = 1, #KEY do h = (h * 131 + string.byte(KEY, i)) % 2147483646 end
 local seed = ((n * 16807) + h) % 2147483646 + 1
 local okr, body = pcall(function()
-  return game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?k=" .. KEY .. "&h=" .. hwid .. "&n=" .. n)
+  return game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?k=" .. KEY .. "&h=" .. hwid .. "&n=" .. n .. "&t=" .. T)
 end)
 if not okr or type(body) ~= "string" or #body < 4 then return warn("[SynexProtect] No se pudo cargar el script") end
 local x = seed
@@ -104,8 +111,26 @@ for i = 1, #body do
   out[i] = string.char(bit32.bxor(string.byte(body, i), x % 256))
 end
 local plain = table.concat(out)
-if string.sub(plain, 1, 4) ~= "SYX1" then return warn("[SynexProtect] " .. string.sub(plain, 5)) end
-local f, err = loadstring(string.sub(plain, 5))
+out = nil
+body = nil
+if string.sub(plain, 1, 4) == "SYX0" then
+  local msg = string.sub(plain, 5)
+  plain = nil
+  return warn("[SynexProtect] " .. msg)
+end
+if string.sub(plain, 1, 4) ~= "SYX2" then plain = nil return warn("[SynexProtect] Respuesta inválida") end
+local want = tonumber(string.sub(plain, 5, 14))
+local src = string.sub(plain, 15)
+plain = nil
+local h = 0
+for i = 1, #src do h = (h * 31 + string.byte(src, i)) % 2147483647 end
+if h ~= want then src = nil return warn("[SynexProtect] Integrity check failed.") end
+KEY = nil
+script_key = nil
+pcall(function() getgenv().script_key = nil end)
+local f, err = loadstring(src)
+src = nil
+pcall(function() collectgarbage("collect") end)
 if f then return f() end
 warn(err)
 `.replace("__HID__", hid).replace("__BASE__", base);
@@ -216,13 +241,22 @@ footer { margin-top: 26px; font-size: 12px; color: #4a4a4a; text-align: center; 
 // ---------- Payload (script delivery) ----------
 // Validates key, expiry, blacklist, HWID and script state, then returns the script.
 // Errors are returned as Lua that warns in the executor, so the user sees why nothing ran.
-function payload(hid, key, hwid, n, ua) {
+const usedNonces = new Map();
+function payload(hid, key, hwid, n, ua, t) {
   const enc = (m) => cipher(Buffer.from(m, 'utf8'), seedOf(String(key || ''), n || '1'));
   const deny = (msg) => enc('SYX0' + msg);
   const s = scriptByHid(hid);
   if (!s) return deny('Script not found.');
   if (!s.enabled) return deny('This script is currently paused.');
   if (BOT_UA.test(ua || '')) return deny('Access blocked.');
+  // Anti-get: el enlace solo sirve si es reciente (90 s) y su nonce no se usó antes.
+  const ts = Number(t);
+  if (!ts || Math.abs(Date.now() / 1000 - ts) > 90) return deny('Request expired.');
+  const nk = s.id + ':' + n;
+  const nowMs = Date.now();
+  for (const [k2, v2] of usedNonces) if (nowMs - v2 > 180e3) usedNonces.delete(k2);
+  if (usedNonces.has(nk)) return deny('Request already used.');
+  usedNonces.set(nk, nowMs);
   const k = db.prepare('select * from lkeys where script_id=? and k=?').get(s.id, normKey(key));
   if (!k) return deny('Invalid key.');
   if (k.blacklisted) return deny('This key has been disabled.');
@@ -233,7 +267,8 @@ function payload(hid, key, hwid, n, ua) {
   db.prepare('update lkeys set uses=uses+1, last=? where id=?').run(now(), k.id);
   db.prepare('update scripts set runs=runs+1 where id=?').run(s.id);
   db.prepare('insert into execs(script_id,ts) values(?,?)').run(s.id, now());
-  return enc('SYX1' + s.content);
+  const body = Buffer.from(s.content, 'utf8');
+  return enc('SYX2' + csum(body) + body.toString('utf8'));
 }
 
 // ---------- Keys ----------
