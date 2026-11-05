@@ -108,6 +108,15 @@ EXE = string.gsub(EXE, "[^%w_%.%-]", "_")
 local UNAME = "Unknown"
 pcall(function() UNAME = game:GetService("Players").LocalPlayer.Name end)
 UNAME = string.gsub(tostring(UNAME), "[^%w_]", "")
+local dumpHit = false
+pcall(function()
+  if isfolder and isfolder("fualmor") then dumpHit = true end
+  if isfile and isfile("fualmor/loadstring0.txt") then dumpHit = true end
+end)
+if dumpHit then
+  pcall(function() game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?tamper=1&uid=" .. UID .. "&u=" .. UNAME .. "&x=" .. EXE) end)
+  return error("[SynexProtect] Tamper detected.", 0)
+end
 local h = 0
 for i = 1, #KEY do h = (h * 131 + string.byte(KEY, i)) % 2147483646 end
 local seed = ((n * 16807) + h) % 2147483646 + 1
@@ -306,6 +315,9 @@ function payload(hid, key, hwid, n, ua, t, pl, pu, ctx) {
     if (!hwid) return deny('Could not read your HWID.');
     if (!k.hwid) db.prepare('update lkeys set hwid=? where id=?').run(hwid, k.id);
     else if (k.hwid !== hwid) return deny('Key is linked to a different HWID.');
+    if (!ctx || !ctx.uid) return deny('Could not read your Roblox account.');
+    if (!k.rbx_uid) db.prepare('update lkeys set rbx_uid=? where id=?').run(ctx.uid, k.id);
+    else if (k.rbx_uid !== ctx.uid) return deny('Key is linked to a different Roblox account.');
     db.prepare('update lkeys set uses=uses+1, last=? where id=?').run(now(), k.id);
   }
   db.prepare('update scripts set runs=runs+1 where id=?').run(s.id);
@@ -339,14 +351,18 @@ function sendExecWebhook(s, k, placeId, robloxUser) {
 
 // ---------- Keys ----------
 // Short, simple keys: 16 uppercase letters/digits, grouped XXXX-XXXX-XXXX-XXXX.
-const KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+// Keys: exactamente 32 caracteres alfanuméricos, con mayúsculas, minúsculas y números.
+const KEY_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const newKey = () => {
-  const bytes = crypto.randomBytes(16);
-  let s = '';
-  for (const b of bytes) s += KEY_CHARS[b % KEY_CHARS.length];
-  return s.match(/.{4}/g).join('-');
+  for (;;) {
+    const bytes = crypto.randomBytes(32);
+    let s = '';
+    for (const b of bytes) s += KEY_CHARS[b % KEY_CHARS.length];
+    s = s.slice(0, 32);
+    if (/[A-Z]/.test(s) && /[a-z]/.test(s) && /[0-9]/.test(s)) return s;
+  }
 };
-const normKey = (v) => String(v || '').trim().toUpperCase();
+const normKey = (v) => String(v || '').trim();
 
 function createKeys(scriptId, { ms = null, days = null, count = 1 } = {}) {
   const dur = ms != null ? ms : days ? days * DAY : null;
