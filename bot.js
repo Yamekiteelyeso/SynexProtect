@@ -580,6 +580,10 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 
 client.once('ready', async () => {
   console.log('[bot] connected as', client.user.tag);
+  client.user.setPresence({
+    status: 'online',
+    activities: [{ name: 'Custom Status', type: require('discord.js').ActivityType.Custom, state: 'Protecting scripts' }],
+  });
   for (const g of client.guilds.cache.values()) paintBotRole(g);
   setTimeout(() => sweepExpiries(), 30e3);
   setInterval(() => sweepExpiries(), 60e3);
