@@ -495,7 +495,7 @@ async function onCommand(i) {
     const extra = i.options.getString('description');
     const embed = new EmbedBuilder().setColor(0x4f545c)
       .setTitle(`${s.name || s.slug} · Control Panel`)
-      .setDescription(`Welcome to the control panel of **${s.name || s.slug}**.\nBuyers: use the buttons below to redeem your key, get the script, get your role, reset your HWID or check your stats.${extra ? '\n\n' + extra : ''}`)
+      .setDescription(`This control panel is for the project: **${s.name || s.slug}**\nIf you're a buyer, click on the buttons below to redeem your key, get the script or get your role.${extra ? '\n\n' + extra : ''}`)
       .setFooter({ text: `Posted by ${i.user.username}`, iconURL: i.user.displayAvatarURL() })
       .setTimestamp();
     const btn = (act, label, emoji, style) => new ButtonBuilder().setCustomId(`sx|${act}|${s.slug}`).setLabel(label).setEmoji(emoji).setStyle(style);
