@@ -108,14 +108,31 @@ EXE = string.gsub(EXE, "[^%w_%.%-]", "_")
 local UNAME = "Unknown"
 pcall(function() UNAME = game:GetService("Players").LocalPlayer.Name end)
 UNAME = string.gsub(tostring(UNAME), "[^%w_]", "")
-local dumpHit = false
-pcall(function()
-  if isfolder and isfolder("fualmor") then dumpHit = true end
-  if isfile and isfile("fualmor/loadstring0.txt") then dumpHit = true end
-end)
-if dumpHit then
-  pcall(function() game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?tamper=1&uid=" .. UID .. "&u=" .. UNAME .. "&x=" .. EXE) end)
+-- Anti-dump por comportamiento: si loadstring escribe archivos al workspace, alguien lo tiene hookeado.
+local function SYX_snap()
+  local set = {}
+  pcall(function()
+    if listfiles then
+      for _, f in ipairs(listfiles("")) do set[tostring(f)] = true end
+    end
+  end)
+  return set
+end
+local function SYX_diff(a, b)
+  for k in pairs(b) do if not a[k] then return true end end
+  return false
+end
+local function SYX_tamper(reason)
+  pcall(function() game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?tamper=1&r=" .. reason .. "&uid=" .. UID .. "&u=" .. UNAME .. "&x=" .. EXE) end)
   return error("[SynexProtect] Tamper detected.", 0)
+end
+do
+  local hit = false
+  pcall(function()
+    if isfolder and isfolder("fualmor") then hit = true end
+    if isfile and isfile("fualmor/loadstring0.txt") then hit = true end
+  end)
+  if hit then return SYX_tamper("fs") end
 end
 local h = 0
 for i = 1, #KEY do h = (h * 131 + string.byte(KEY, i)) % 2147483646 end
@@ -148,7 +165,9 @@ if h ~= want then src = nil return warn("[SynexProtect] Integrity check failed."
 KEY = nil
 script_key = nil
 pcall(function() getgenv().script_key = nil end)
+local snapBefore = SYX_snap()
 local f, err = loadstring(src)
+if SYX_diff(snapBefore, SYX_snap()) then src = nil return SYX_tamper("loadstring") end
 src = nil
 pcall(function() collectgarbage("collect") end)
 if f then return f() end
