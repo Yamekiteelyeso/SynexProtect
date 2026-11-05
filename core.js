@@ -84,6 +84,7 @@ local BASE = "__BASE__"
 local KEY = tostring((getgenv and getgenv().script_key) or script_key or "")
 local BAD = {"httpspy", "simplespy", "remotespy", "hydroxide", "dumper", "envlogger"}
 local flagged = false
+if type(game.HttpGet) ~= "function" or type(loadstring) ~= "function" then return error("[SynexProtect] Tamper detected.", 0) end
 pcall(function()
   for name in pairs((getgenv and getgenv()) or _G) do
     local s = string.lower(tostring(name))
@@ -99,6 +100,11 @@ local n = math.random(1, 2147483640)
 local T = os.time()
 local PID = "0"
 pcall(function() PID = tostring(game.PlaceId) end)
+local UID = "0"
+pcall(function() UID = tostring(game:GetService("Players").LocalPlayer.UserId) end)
+local EXE = "Unknown"
+pcall(function() local nm = identifyexecutor() if nm then EXE = tostring(nm) end end)
+EXE = string.gsub(EXE, "[^%w_%.%-]", "_")
 local UNAME = "Unknown"
 pcall(function() UNAME = game:GetService("Players").LocalPlayer.Name end)
 UNAME = string.gsub(tostring(UNAME), "[^%w_]", "")
@@ -106,7 +112,7 @@ local h = 0
 for i = 1, #KEY do h = (h * 131 + string.byte(KEY, i)) % 2147483646 end
 local seed = ((n * 16807) + h) % 2147483646 + 1
 local okr, body = pcall(function()
-  return game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?k=" .. KEY .. "&h=" .. hwid .. "&n=" .. n .. "&t=" .. T .. "&p=" .. PID .. "&u=" .. UNAME)
+  return game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?k=" .. KEY .. "&h=" .. hwid .. "&n=" .. n .. "&t=" .. T .. "&p=" .. PID .. "&u=" .. UNAME .. "&uid=" .. UID .. "&x=" .. EXE)
 end)
 if not okr or type(body) ~= "string" or #body < 4 then return warn("[SynexProtect] No se pudo cargar el script") end
 local x = seed
@@ -247,20 +253,47 @@ footer { margin-top: 26px; font-size: 12px; color: #4a4a4a; text-align: center; 
 // Validates key, expiry, blacklist, HWID and script state, then returns the script.
 // Errors are returned as Lua that warns in the executor, so the user sees why nothing ran.
 const usedNonces = new Map();
-function payload(hid, key, hwid, n, ua, t, pl, pu) {
+// Alerta a la webhook de admins (ADMIN_WEEBHOOK) cuando alguien intenta sacar el código fuente.
+const ADMIN_WEBHOOK = process.env.ADMIN_WEEBHOOK || '';
+function alertAdmins(ctx) {
+  if (!ADMIN_WEBHOOK || !WEBHOOK_RE.test(ADMIN_WEBHOOK)) return;
+  const payload = {
+    username: 'Synex Alerts',
+    embeds: [{
+      title: 'PELIGRO',
+      description: 'Un usuario intentó sacar el código fuente de uno de los scripts',
+      color: 0xed4245,
+      fields: [
+        { name: 'User (roblox)', value: ctx.user || 'Unknown', inline: true },
+        { name: 'IP', value: ctx.ip || 'Unknown', inline: true },
+        { name: 'ID Roblox', value: ctx.uid || 'Unknown', inline: true },
+        { name: 'Dispositivo', value: ctx.hwid || 'Unknown', inline: true },
+        { name: 'Executor', value: ctx.exe || 'Unknown', inline: true },
+      ],
+      footer: { text: 'Synex Alerts' },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+  fetch(ADMIN_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
+}
+function payload(hid, key, hwid, n, ua, t, pl, pu, ctx) {
+  const tamper = () => {
+    alertAdmins({ user: pu, ip: ctx && ctx.ip, uid: ctx && ctx.uid, hwid, exe: ctx && ctx.exe });
+    return enc('SYX0Tamper detected.');
+  };
   const enc = (m) => cipher(Buffer.from(m, 'utf8'), seedOf(String(key || ''), n || '1'));
   const deny = (msg) => enc('SYX0' + msg);
   const s = scriptByHid(hid);
   if (!s) return deny('Script not found.');
   if (!s.enabled) return deny('This script is currently paused.');
-  if (BOT_UA.test(ua || '')) return deny('Access blocked.');
+  if (BOT_UA.test(ua || '')) return tamper();
   // Anti-get: el enlace solo sirve si es reciente (90 s) y su nonce no se usó antes.
   const ts = Number(t);
   if (!ts || Math.abs(Date.now() / 1000 - ts) > 90) return deny('Request expired.');
   const nk = s.id + ':' + n;
   const nowMs = Date.now();
   for (const [k2, v2] of usedNonces) if (nowMs - v2 > 180e3) usedNonces.delete(k2);
-  if (usedNonces.has(nk)) return deny('Request already used.');
+  if (usedNonces.has(nk)) return tamper();
   usedNonces.set(nk, nowMs);
 
   let k = null;
@@ -289,7 +322,6 @@ function sendExecWebhook(s, k, placeId, robloxUser) {
   const payload = {
     username: 'SynexProtect',
     embeds: [{
-      author: { name: `User Execute (${name})` },
       title: `${name} - Script executed`,
       color: 0x2b2d31,
       fields: [
@@ -355,6 +387,6 @@ function resetHwid(k, s, force = false) {
 module.exports = {
   WEBHOOK_RE, DAY, PLAN_MAX, PREMIUM_MAX, maxScripts, isAdminUser, ADMIN_IDS,
   slugify, newHid, scriptBySlug, scriptByHid, scriptForOwner,
-  runStats, loadstring, loaderLua, landingHtml, payload,
+  runStats, loadstring, loaderLua, landingHtml, payload, alertAdmins,
   createKeys, parseDuration, expired, resetHwid, normKey,
 };
