@@ -16,6 +16,7 @@ try { db.exec('alter table users add column plan_expires integer'); } catch {}
 try { db.exec('alter table users add column banned integer default 0'); } catch {}
 try { db.exec('alter table scripts add column webhook_url text'); } catch {}
 try { db.exec('alter table scripts add column webhook_on integer default 0'); } catch {}
+try { db.exec('alter table lkeys add column rbx_uid text'); } catch {}
 try { db.exec('alter table users add column blacklisted integer default 0'); } catch {}
 // Duraciones de llaves de plan (m = mes, no minuto)
 const PLAN_DUR = { '1s': 1e3, '1d': 864e5, '2d': 2 * 864e5, '1w': 7 * 864e5, '1m': 30 * 864e5, '1y': 365 * 864e5, perma: 0 };
