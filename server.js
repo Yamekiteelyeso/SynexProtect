@@ -26,7 +26,52 @@ const genPlanKey = (plan) => plan === 'plus'
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '105mb' }));
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://cdn.discordapp.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
+  });
+  if (req.secure || req.protocol === 'https') res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
+app.use(express.json({ limit: '20mb' }));
+
+// Límite de peticiones por IP (en memoria)
+const hits = new Map();
+function limit(name, max, windowMs) {
+  return (req, res, next) => {
+    const key = name + ':' + req.ip;
+    const t = Date.now();
+    let e = hits.get(key);
+    if (!e || t > e.reset) { e = { c: 0, reset: t + windowMs }; hits.set(key, e); }
+    e.c++;
+    if (e.c > max) {
+      res.set('Retry-After', String(Math.ceil((e.reset - t) / 1000)));
+      return res.status(429).json({ error: 'Demasiadas solicitudes, esperá un momento.' });
+    }
+    next();
+  };
+}
+setInterval(() => { const t = Date.now(); for (const [k, v] of hits) if (t > v.reset) hits.delete(k); }, 60e3).unref();
+
+// Protección CSRF básica: las peticiones que cambian datos solo pueden venir del mismo sitio
+app.use('/api', (req, res, next) => {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    const o = req.headers.origin;
+    if (o) {
+      try { if (new URL(o).host !== req.headers.host) return res.status(403).json({ error: 'Origen no permitido' }); }
+      catch { return res.status(403).json({ error: 'Origen no permitido' }); }
+    }
+  }
+  next();
+});
+app.use('/api', (req, res, next) => (req.method === 'POST' ? limit('post', 40, 60e3)(req, res, next) : next()));
+app.use('/api/admin', limit('admin', 120, 60e3));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -233,7 +278,7 @@ sweepPlans();
 setInterval(sweepPlans, 5 * 60e3);
 
 // ---------- Canjear llave de plan ----------
-app.post('/api/plan/redeem', auth, (req, res) => {
+app.post('/api/plan/redeem', limit('redeem', 10, 60e3), auth, (req, res) => {
   if (req.user.blacklisted) return res.status(403).json({ error: 'Tu cuenta está en blacklist' });
   const code = String((req.body || {}).code || '').trim();
   if (!code.startsWith('PREMIUM_') && !code.startsWith('PLUS_')) return res.status(400).json({ error: 'Formato de llave inválido' });
@@ -247,10 +292,17 @@ app.post('/api/plan/redeem', auth, (req, res) => {
 });
 
 // ---------- Admin (solo IDs de ADMIN_IDS) ----------
+db.exec('create table if not exists admin_logs(id integer primary key, admin_id integer, ip text, method text, path text, body text, ts integer)');
 function adminOnly(req, res, next) {
   if (!C.isAdminUser(req.user)) return res.status(403).json({ error: 'Solo admins' });
+  if (req.method !== 'GET') {
+    try { db.prepare('insert into admin_logs(admin_id,ip,method,path,body,ts) values(?,?,?,?,?,?)').run(req.user.id, req.ip, req.method, String(req.originalUrl).slice(0, 200), JSON.stringify(req.body || {}).slice(0, 500), Date.now()); } catch {}
+  }
   next();
 }
+app.get('/api/admin/logs', auth, adminOnly, (req, res) => {
+  res.json(db.prepare('select * from admin_logs order by id desc limit 200').all());
+});
 app.get('/api/admin/overview', auth, adminOnly, (req, res) => {
   const scripts = db.prepare(`select s.id,s.slug,s.name,s.enabled,s.runs,u.username owner,
     (select count(*) from lkeys where script_id=s.id) keys from scripts s left join users u on u.id=s.user_id order by s.id desc limit 300`).all()
@@ -341,7 +393,7 @@ app.get('/files/v1/loaders/:file', (req, res) => {
   if (req.accepts(['html', 'text']) === 'html' && !/Roblox/i.test(req.headers['user-agent'] || '')) return res.redirect(`/s/${slug}`);
   res.type('text/plain').set('Cache-Control', 'no-store').send(C.loaderLua(slug, base(req)));
 });
-app.get('/files/v1/payload/:slug', (req, res) => {
+app.get('/files/v1/payload/:slug', limit('payload', 60, 60e3), (req, res) => {
   const q = req.query;
   const key = String(q.k || ''), hwid = String(q.h || ''), n = String(q.n || '');
   const pl = /^\d{1,20}$/.test(String(q.p || '')) ? String(q.p) : '';
@@ -362,6 +414,12 @@ app.get('/files/v1/payload/:slug', (req, res) => {
 app.get('/health', (req, res) => res.json({ ok: true }));
 const PORT = Number(process.env.PORT) || 3000;
 let botStarted = false;
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.too.large') return res.status(413).json({ error: 'Archivo demasiado grande' });
+  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Solicitud inválida' });
+  console.error('[server]', err && err.message);
+  res.status(500).json({ error: 'Error interno' });
+});
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('[web] listo en puerto', PORT);
   if (!botStarted && process.env.DISCORD_BOT_TOKEN) { botStarted = true; require('./bot').start(); }
