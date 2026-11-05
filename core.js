@@ -81,6 +81,11 @@ function loaderLua(hid, base) {
   return `-- SynexProtect v1
 local SLUG = "__HID__"
 local BASE = "__BASE__"
+local function SYX_yield() if task and task.wait then task.wait() elseif wait then wait() end end
+local function SYX_kick(msg)
+  pcall(function() game:GetService("Players").LocalPlayer:Kick("[SynexProtect] " .. msg) end)
+  error("[SynexProtect] " .. msg, 0)
+end
 local KEY = tostring((getgenv and getgenv().script_key) or script_key or "")
 local BAD = {"httpspy", "simplespy", "remotespy", "hydroxide", "dumper", "envlogger"}
 local flagged = false
@@ -91,7 +96,7 @@ pcall(function()
     for _, w in ipairs(BAD) do if string.find(s, w, 1, true) then flagged = true end end
   end
 end)
-if flagged then return warn("[SynexProtect] Entorno no permitido") end
+if flagged then return SYX_kick("Entorno no permitido") end
 local hwid = "0"
 pcall(function() hwid = game:GetService("RbxAnalyticsService"):GetClientId() end)
 if hwid == "0" then pcall(function() hwid = tostring(game:GetService("Players").LocalPlayer.UserId) end) end
@@ -124,7 +129,7 @@ local function SYX_diff(a, b)
 end
 local function SYX_tamper(reason)
   pcall(function() game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?tamper=1&r=" .. reason .. "&uid=" .. UID .. "&u=" .. UNAME .. "&x=" .. EXE) end)
-  return error("[SynexProtect] Tamper detected.", 0)
+  return SYX_kick("Tamper detected.")
 end
 do
   local hit = false
@@ -142,26 +147,36 @@ local okr, body = pcall(function()
 end)
 if not okr or type(body) ~= "string" or #body < 4 then return warn("[SynexProtect] No se pudo cargar el script") end
 local x = seed
-local out = {}
-for i = 1, #body do
-  x = (x * 16807) % 2147483647
-  out[i] = string.char(bit32.bxor(string.byte(body, i), x % 256))
+local chunks = {}
+local CH = 4096
+local len = #body
+local pos = 1
+while pos <= len do
+  local last = math.min(pos + CH - 1, len)
+  local buf = {}
+  for k = pos, last do
+    x = (x * 16807) % 2147483647
+    buf[#buf + 1] = string.char(bit32.bxor(string.byte(body, k), x % 256))
+  end
+  chunks[#chunks + 1] = table.concat(buf)
+  pos = last + 1
+  SYX_yield()
 end
-local plain = table.concat(out)
-out = nil
+local plain = table.concat(chunks)
+chunks = nil
 body = nil
 if string.sub(plain, 1, 4) == "SYX0" then
   local msg = string.sub(plain, 5)
   plain = nil
-  error("[SynexProtect] " .. msg, 0)
+  SYX_kick(msg)
 end
-if string.sub(plain, 1, 4) ~= "SYX2" then plain = nil return warn("[SynexProtect] Respuesta inválida") end
+if string.sub(plain, 1, 4) ~= "SYX2" then plain = nil return SYX_kick("Invalid response.") end
 local want = tonumber(string.sub(plain, 5, 14))
 local src = string.sub(plain, 15)
 plain = nil
 local h = 0
-for i = 1, #src do h = (h * 31 + string.byte(src, i)) % 2147483647 end
-if h ~= want then src = nil return warn("[SynexProtect] Integrity check failed.") end
+for i = 1, #src do h = (h * 31 + string.byte(src, i)) % 2147483647; if i % 8192 == 0 then SYX_yield() end end
+if h ~= want then src = nil return SYX_kick("Integrity check failed.") end
 KEY = nil
 script_key = nil
 pcall(function() getgenv().script_key = nil end)
@@ -169,7 +184,6 @@ local snapBefore = SYX_snap()
 local f, err = loadstring(src)
 if SYX_diff(snapBefore, SYX_snap()) then src = nil return SYX_tamper("loadstring") end
 src = nil
-pcall(function() collectgarbage("collect") end)
 if f then return f() end
 warn(err)
 `.replace("__HID__", hid).replace("__BASE__", base);
