@@ -391,7 +391,7 @@ app.get('/files/v1/loaders/:file', (req, res) => {
   const s = C.scriptByHid(slug);
   if (!s) return res.status(404).type('text/plain').send('-- not found');
   if (req.accepts(['html', 'text']) === 'html' && !/Roblox/i.test(req.headers['user-agent'] || '')) return res.redirect(`/s/${slug}`);
-  res.type('text/plain').set('Cache-Control', 'no-store').send(C.loaderLua(slug, base(req)));
+  res.type('text/plain').set('Cache-Control', 'no-store').send(C.obfLoader(C.loaderLua(slug, base(req))));
 });
 app.get('/files/v1/payload/:slug', limit('payload', 60, 60e3), (req, res) => {
   const q = req.query;
