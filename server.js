@@ -343,10 +343,18 @@ app.get('/files/v1/loaders/:file', (req, res) => {
 app.get('/files/v1/payload/:slug', (req, res) => {
   const q = req.query;
   const key = String(q.k || ''), hwid = String(q.h || ''), n = String(q.n || '');
-  if (!/^\d{1,10}$/.test(n) || !/^[A-Za-z0-9_.-]{1,80}$/.test(hwid) && hwid !== '') return res.status(400).end();
   const pl = /^\d{1,20}$/.test(String(q.p || '')) ? String(q.p) : '';
   const pu = /^[A-Za-z0-9_]{0,20}$/.test(String(q.u || '')) ? String(q.u) : '';
-  const buf = C.payload(String(req.params.slug).toLowerCase(), key, hwid, n, req.headers['user-agent'], q.t, pl, pu);
+  const uid = /^\d{1,20}$/.test(String(q.uid || '')) ? String(q.uid) : '';
+  const exe = /^[A-Za-z0-9_.-]{0,40}$/.test(String(q.x || '')) ? String(q.x) : '';
+  const ctx = { ip: req.ip, uid, exe };
+  // Sin los parámetros del loader (intento de descarga directa): alerta y corte.
+  const flowOk = /^\d{1,10}$/.test(n) && /^\d{1,12}$/.test(String(q.t || '')) && /^[A-Za-z0-9_.-]{1,80}$/.test(hwid);
+  if (!flowOk) {
+    C.alertAdmins({ user: pu, ip: req.ip, uid, hwid, exe });
+    return res.type('application/octet-stream').set('Cache-Control', 'no-store').send(C.payload(String(req.params.slug).toLowerCase(), '', '', '0', '', '0', '', '', ctx));
+  }
+  const buf = C.payload(String(req.params.slug).toLowerCase(), key, hwid, n, req.headers['user-agent'], q.t, pl, pu, ctx);
   res.type('application/octet-stream').set('Cache-Control', 'no-store').send(buf);
 });
 
