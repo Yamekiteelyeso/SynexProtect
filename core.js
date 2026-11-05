@@ -189,6 +189,15 @@ warn(err)
 `.replace("__HID__", hid).replace("__BASE__", base);
 }
 
+// Loader ofuscado: el texto del .get sale como hexadecimal cifrado y se decodifica al ejecutarse.
+function obfLoader(src) {
+  const k = crypto.randomBytes(16);
+  const bytes = Buffer.from(src, 'utf8');
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) hex += (bytes[i] ^ k[i % k.length]).toString(16).padStart(2, '0');
+  return `local d="${hex}"\nlocal k="${k.toString('hex')}"\nlocal o = {}\nfor i = 1, #d, 2 do\n  local j = math.floor((i - 1) / 2)\n  local b = tonumber(string.sub(d, i, i + 1), 16)\n  local q = tonumber(string.sub(k, (j % 16) * 2 + 1, (j % 16) * 2 + 2), 16)\n  o[#o + 1] = string.char(bit32.bxor(b, q))\nend\nreturn loadstring(table.concat(o))()\n`;
+}
+
 // Public loader page (what people see when they open the loader link in a browser).
 function landingHtml(hid, base) {
   const s = scriptByHid(hid);
@@ -436,6 +445,6 @@ function resetHwid(k, s, force = false) {
 module.exports = {
   WEBHOOK_RE, DAY, PLAN_MAX, PREMIUM_MAX, maxScripts, isAdminUser, ADMIN_IDS,
   slugify, newHid, scriptBySlug, scriptByHid, scriptForOwner,
-  runStats, loadstring, loaderLua, landingHtml, payload, alertAdmins,
+  runStats, loadstring, loaderLua, obfLoader, landingHtml, payload, alertAdmins,
   createKeys, parseDuration, expired, resetHwid, normKey,
 };
