@@ -57,46 +57,67 @@ function loadstring(hid, base, key) {
 
 // ---------- Entrega cifrada ----------
 const BOT_UA = /curl|wget|python|httpie|postman|insomnia|node-fetch|axios|java|go-http|discordbot|okhttp|powershell/i;
-// Semilla: depende de la key y del nonce que manda el loader. Misma fórmula en Lua.
 // Checksum de integridad (mismo cálculo en Lua): evita que cambien el payload en tránsito.
 function csum(buf) {
   let h = 0;
   for (const b of buf) h = (h * 31 + b) % 2147483647;
   return String(h).padStart(10, '0');
 }
+// Mezclador de 32 bits (fmix32 de MurmurHash3). Math.imul = multiplicación mod 2^32; la versión Lua usa mitades de 16 bits.
+function fmix32(h) {
+  h >>>= 0;
+  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+// Semilla: depende de la key y del nonce del loader. Misma fórmula en Lua.
 function seedOf(key, n) {
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 131 + key.charCodeAt(i)) % 2147483646;
-  return ((Number(n) * 16807 + h) % 2147483646) + 1;
+  return fmix32((h ^ fmix32(Number(n))) >>> 0);
 }
-// Park-Miller (x*16807 mod 2^31-1) XOR byte a byte.
+// Keystream en bloques de 4 bytes: cada bloque es fmix32(seed ^ (blk+1)*golden). Misma fórmula en Lua.
 function cipher(buf, seed) {
   const out = Buffer.from(buf);
-  let x = seed;
-  for (let i = 0; i < out.length; i++) { x = (x * 16807) % 2147483647; out[i] ^= x % 256; }
+  for (let b = 0; b * 4 < out.length; b++) {
+    const w = fmix32((seed ^ Math.imul(b + 1, 0x9E3779B9)) >>> 0);
+    for (let j = 0; j < 4 && b * 4 + j < out.length; j++) out[b * 4 + j] ^= (w >>> (j * 8)) & 255;
+  }
   return out;
 }
 
 function loaderLua(hid, base) {
-  return `-- SynexProtect v1
+  return `-- SynexProtect v2
 local SLUG = "__HID__"
 local BASE = "__BASE__"
+local LS = loadstring
 local function SYX_yield() if task and task.wait then task.wait() elseif wait then wait() end end
 local function SYX_kick(msg)
   pcall(function() game:GetService("Players").LocalPlayer:Kick("[SynexProtect] " .. msg) end)
   error("[SynexProtect] " .. msg, 0)
 end
+if type(game.HttpGet) ~= "function" or type(LS) ~= "function" then return error("[SynexProtect] Tamper detected.", 0) end
+-- Sanidad de las librerías base: si alguien las reemplazó, no seguimos.
+if bit32.bxor(5, 3) ~= 6 or string.char(65) ~= "A" or math.floor(3.7) ~= 3 then return error("[SynexProtect] Tamper detected.", 0) end
 local KEY = tostring((getgenv and getgenv().script_key) or script_key or "")
-local BAD = {"httpspy", "simplespy", "remotespy", "hydroxide", "dumper", "envlogger"}
+local BAD = {"httpspy", "simplespy", "remotespy", "hydroxide", "dumper", "envlogger", "sipspy", "turtlespy", "moonspy", "ruinspy"}
+local BAD_EXACT = {dex = true, dexplorer = true, scriptdumper = true}
 local flagged = false
-if type(game.HttpGet) ~= "function" or type(loadstring) ~= "function" then return error("[SynexProtect] Tamper detected.", 0) end
 pcall(function()
   for name in pairs((getgenv and getgenv()) or _G) do
     local s = string.lower(tostring(name))
+    if BAD_EXACT[s] then flagged = true end
     for _, w in ipairs(BAD) do if string.find(s, w, 1, true) then flagged = true end end
   end
 end)
 if flagged then return SYX_kick("Entorno no permitido") end
+-- Anti-hook: loadstring tiene que ser la función nativa (C). Si está envuelta en Lua, alguien la intercepta.
+local hooked = false
+if type(iscclosure) == "function" then
+  pcall(function() if not iscclosure(LS) then hooked = true end end)
+end
+if hooked then return SYX_kick("Hooked loadstring.") end
 local hwid = "0"
 pcall(function() hwid = game:GetService("RbxAnalyticsService"):GetClientId() end)
 if hwid == "0" then pcall(function() hwid = tostring(game:GetService("Players").LocalPlayer.UserId) end) end
@@ -141,12 +162,28 @@ do
 end
 local h = 0
 for i = 1, #KEY do h = (h * 131 + string.byte(KEY, i)) % 2147483646 end
-local seed = ((n * 16807) + h) % 2147483646 + 1
+-- Multiplicación mod 2^32 sin perder precisión (los números de Lua son doubles).
+local function SYX_mul(a, b)
+  local lo = b % 65536
+  local hi = (b - lo) / 65536
+  return ((a * hi) % 65536 * 65536 + a * lo) % 4294967296
+end
+local function SYX_fmix(v)
+  v = bit32.bxor(v, bit32.rshift(v, 16))
+  v = SYX_mul(v, 0x85ebca6b)
+  v = bit32.bxor(v, bit32.rshift(v, 13))
+  v = SYX_mul(v, 0xc2b2ae35)
+  return bit32.bxor(v, bit32.rshift(v, 16))
+end
+local function SYX_ks(seed, blk)
+  return SYX_fmix(bit32.bxor(seed, SYX_mul(blk + 1, 0x9E3779B9)))
+end
+local seed = SYX_fmix(bit32.bxor(h, SYX_fmix(n)))
 local okr, body = pcall(function()
   return game:HttpGet(BASE .. "/files/v1/payload/" .. SLUG .. "?k=" .. KEY .. "&h=" .. hwid .. "&n=" .. n .. "&t=" .. T .. "&p=" .. PID .. "&u=" .. UNAME .. "&uid=" .. UID .. "&x=" .. EXE)
 end)
 if not okr or type(body) ~= "string" or #body < 4 then return warn("[SynexProtect] No se pudo cargar el script") end
-local x = seed
+local W = 0
 local chunks = {}
 local CH = 4096
 local len = #body
@@ -155,8 +192,9 @@ while pos <= len do
   local last = math.min(pos + CH - 1, len)
   local buf = {}
   for k = pos, last do
-    x = (x * 16807) % 2147483647
-    buf[#buf + 1] = string.char(bit32.bxor(string.byte(body, k), x % 256))
+    local j = (k - 1) % 4
+    if j == 0 then W = SYX_ks(seed, (k - 1) / 4) end
+    buf[#buf + 1] = string.char(bit32.bxor(string.byte(body, k), bit32.band(bit32.rshift(W, j * 8), 255)))
   end
   chunks[#chunks + 1] = table.concat(buf)
   pos = last + 1
@@ -170,18 +208,23 @@ if string.sub(plain, 1, 4) == "SYX0" then
   plain = nil
   SYX_kick(msg)
 end
-if string.sub(plain, 1, 4) ~= "SYX2" then plain = nil return SYX_kick("Invalid response.") end
-local want = tonumber(string.sub(plain, 5, 14))
-local src = string.sub(plain, 15)
+if string.sub(plain, 1, 4) ~= "SYX3" then plain = nil return SYX_kick("Invalid response.") end
+local ns = tostring(n)
+ns = string.rep("0", 10 - #ns) .. ns
+-- El servidor repite el nonce: una respuesta vieja o cacheada no sirve para esta ejecución.
+if string.sub(plain, 5, 14) ~= ns then plain = nil return SYX_kick("Replayed response.") end
+local want = tonumber(string.sub(plain, 15, 24))
+local src = string.sub(plain, 25)
 plain = nil
-local h = 0
-for i = 1, #src do h = (h * 31 + string.byte(src, i)) % 2147483647; if i % 8192 == 0 then SYX_yield() end end
-if h ~= want then src = nil return SYX_kick("Integrity check failed.") end
+local ck = 0
+for i = 1, #src do ck = (ck * 31 + string.byte(src, i)) % 2147483647; if i % 8192 == 0 then SYX_yield() end end
+if ck ~= want then src = nil return SYX_kick("Integrity check failed.") end
 KEY = nil
 script_key = nil
 pcall(function() getgenv().script_key = nil end)
 local snapBefore = SYX_snap()
-local f, err = loadstring(src)
+if loadstring ~= LS then src = nil return SYX_tamper("hook") end
+local f, err = LS(src)
 if SYX_diff(snapBefore, SYX_snap()) then src = nil return SYX_tamper("loadstring") end
 src = nil
 if f then return f() end
@@ -366,7 +409,7 @@ function payload(hid, key, hwid, n, ua, t, pl, pu, ctx) {
   db.prepare('insert into execs(script_id,ts) values(?,?)').run(s.id, now());
   if (s.webhook_on && s.webhook_url) sendExecWebhook(s, k || { k: 'FREE (no key)', uses: 0 }, pl, pu);
   const body = Buffer.from(s.content, 'utf8');
-  return enc('SYX2' + csum(body) + body.toString('utf8'));
+  return enc('SYX3' + String(n).padStart(10, '0') + csum(body) + body.toString('utf8'));
 }
 
 // ---------- Webhook de ejecución (embed gris, en inglés) ----------
